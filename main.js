@@ -261,25 +261,27 @@ function renderChart(players) {
       responsive: true,
       maintainAspectRatio: false,
       interaction: {
-        mode: "index",
-        intersect: false
+        mode: "nearest",
+        intersect: true
       },
       plugins: {
         tooltip: {
-          callbacks: {
-            afterLabel: function(context) {
-              const player = players[context.datasetIndex];
-              const point = player.projection[context.dataIndex];
+            mode: "nearest",
+            intersect: true,
+            callbacks: {
+                afterLabel: function(context) {
+                const player = players[context.datasetIndex];
+                const point = player.projection[context.dataIndex];
 
-            return [
-            `Games: ${point.games}`,
-            `Age: ${getAgeAtSeason(player.playerAge, point.season)}`,
-            `Base Limit: ${point.baseLimit.toFixed(2)}`,
-            `Heart: ${(point.heartBonus * 100).toFixed(1)}%`,
-            `Loyal: ${player.loyal ? "Yes" : "No"}`
-            ];
+                return [
+                `Games: ${point.games}`,
+                `Age: ${getAgeAtSeason(player.playerAge, point.season)}`,
+                `Base Limit: ${point.baseLimit.toFixed(2)}`,
+                `Heart: ${(point.heartBonus * 100).toFixed(1)}%`,
+                `Loyal: ${player.loyal ? "Yes" : "No"}`
+                ];
+                }
             }
-          }
         }
       },
       scales: {
