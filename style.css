@@ -1,0 +1,79 @@
+body {
+  margin: 0;
+  background: #080a0d;
+  color: #f5f5dc;
+  font-family: Arial, sans-serif;
+}
+
+.app {
+  max-width: 980px;
+  margin: 32px auto;
+  padding: 24px;
+  background: #202124;
+  border-radius: 18px;
+}
+
+.player-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.panel {
+  background: #171819;
+  border: 1px solid #333;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+textarea {
+  width: 100%;
+  height: 150px;
+  background: #eee8d5;
+  color: #111;
+}
+
+label {
+  display: block;
+  margin-top: 10px;
+}
+
+input,
+select {
+  width: 100%;
+  height: 30px;
+  box-sizing: border-box;
+}
+
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 16px;
+}
+
+button {
+  height: 32px;
+  background: #ff7a00;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.chart-panel {
+  min-height: 320px;
+}
+
+#comparison-chart {
+  max-height: 320px;
+}
