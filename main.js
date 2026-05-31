@@ -118,6 +118,23 @@ function getSelectedSkills() {
     .map(checkbox => checkbox.value);
 }
 
+function useSkillWeights() {
+  return document.getElementById("use-skill-weights")?.checked || false;
+}
+
+function getSkillWeights() {
+  const weights = {};
+
+  document.querySelectorAll(".skill-weight").forEach(input => {
+    const skillName = input.dataset.skill;
+    const value = Number(input.value);
+
+    weights[skillName] = !Number.isNaN(value) && value > 0 ? value : 0;
+  });
+
+  return weights;
+}
+
 function getHeartBonusByGames(games, loyal = false) {
   const multiplier = loyal ? 0.75 : 1;
 
@@ -140,17 +157,29 @@ function getHeartBonus(games, mode, loyal = false) {
   return getHeartBonusByGames(games, loyal);
 }
 
-function getSelectedLimitAverage(player, selectedSkills) {
-  const values = selectedSkills
-    .map(skillName => {
-      const skill = player.skills.find(item => item.name === skillName);
-      return skill && skill.max !== null ? Number(skill.max) : null;
-    })
-    .filter(value => value !== null && !Number.isNaN(value));
+function getSelectedLimitAverage(player, selectedSkills, weights = {}, weightsEnabled = false) {
+  let weightedSum = 0;
+  let totalWeight = 0;
 
-  if (values.length === 0) return 0;
+  selectedSkills.forEach(skillName => {
+    const skill = player.skills.find(item => item.name === skillName);
 
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+    if (!skill || skill.max === null || Number.isNaN(Number(skill.max))) {
+      return;
+    }
+
+    const limit = Number(skill.max);
+    const weight = weightsEnabled ? Number(weights[skillName] || 0) : 1;
+
+    if (weight <= 0) return;
+
+    weightedSum += limit * weight;
+    totalWeight += weight;
+  });
+
+  if (totalWeight === 0) return 0;
+
+  return weightedSum / totalWeight;
 }
 
 function getMissingLimits(player, selectedSkills) {
@@ -174,8 +203,8 @@ function getAgeAtSeason(playerAgeText, seasonOffset) {
   return `${ageAtSeason}yo`;
 }
 
-function buildProjection(player, selectedSkills, startGames, heartMode, gamesPerSeason, seasonCount, loyal = false) {
-  const baseLimit = getSelectedLimitAverage(player, selectedSkills);
+function buildProjection(player, selectedSkills, startGames, heartMode, gamesPerSeason, seasonCount, loyal = false, weights = {}, weightsEnabled = false) {
+  const baseLimit = getSelectedLimitAverage(player, selectedSkills, weights, weightsEnabled);
   const result = [];
 
   for (let season = 0; season <= seasonCount; season++) {
@@ -233,7 +262,7 @@ function getLeaderChanges(players) {
   return changes;
 }
 
-function renderChart(players) {
+function renderChart(players, weightsEnabled = false) {
   const canvas = document.getElementById("comparison-chart");
   if (!canvas) return;
 
@@ -276,7 +305,7 @@ function renderChart(players) {
                 return [
                 `Games: ${point.games}`,
                 `Age: ${getAgeAtSeason(player.playerAge, point.season)}`,
-                `Base Limit: ${point.baseLimit.toFixed(2)}`,
+                `${weightsEnabled ? "Base Weighted Score" : "Base Limit"}: ${point.baseLimit.toFixed(2)}`,
                 `Heart: ${(point.heartBonus * 100).toFixed(1)}%`,
                 `Loyal: ${player.loyal ? "Yes" : "No"}`
                 ];
@@ -294,7 +323,7 @@ function renderChart(players) {
         y: {
           title: {
             display: true,
-            text: "Limit + Heart Bonus"
+            text: weightsEnabled ? "Weighted Score + Heart Bonus" : "Limit + Heart Bonus"
           }
         }
       }
@@ -302,10 +331,16 @@ function renderChart(players) {
   });
 }
 
-function renderSummary(players, selectedSkills) {
+function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = false) {
   const summary = document.getElementById("summary");
   if (!summary) return;
+    const modeText = weightsEnabled ? "Weighted score" : "Equal weighting";
 
+    const weightText = weightsEnabled
+    ? `<p><strong>Weights:</strong> ${selectedSkills
+        .map(skill => `${escapeHtml(skill)}: ${Number(weights[skill] || 0)}`)
+        .join(", ")}</p>`
+    : "";
   const playerRows = players.map(player => {
     const start = player.projection[0];
     const end = player.projection[player.projection.length - 1];
@@ -320,7 +355,7 @@ function renderSummary(players, selectedSkills) {
         <strong>${escapeHtml(player.playerName || "Unknown Player")}:</strong>
         ${start.effectiveLimit.toFixed(2)} → ${end.effectiveLimit.toFixed(2)}
         <br>
-        Base Limit: ${start.baseLimit.toFixed(2)}
+        ${weightsEnabled ? "Base Weighted Score" : "Base Limit"}: ${start.baseLimit.toFixed(2)}
         Loyal: ${player.loyal ? "Yes" : "No"}
         ${warning}
       </p>
@@ -341,6 +376,8 @@ function renderSummary(players, selectedSkills) {
     <h2>Summary</h2>
 
     <p><strong>Compared skills:</strong> ${escapeHtml(selectedSkills.join(", "))}</p>
+    <p><strong>Mode:</strong> ${modeText}</p>
+    ${weightText}
 
     ${playerRows}
 
@@ -448,7 +485,8 @@ function runComparison() {
   }
 
   const selectedSkills = getSelectedSkills();
-
+  const weightsEnabled = useSkillWeights();
+  const weights = getSkillWeights();
   if (selectedSkills.length === 0) {
     alert("Please select at least one skill.");
     return;
@@ -477,7 +515,9 @@ function runComparison() {
         playerInput.heartMode,
         gamesPerSeason,
         seasonCount,
-        playerInput.loyal
+        playerInput.loyal,
+        weights,
+        weightsEnabled
     )
     };
     })
@@ -488,8 +528,8 @@ function runComparison() {
     return;
   }
 
-  renderChart(parsedPlayers);
-  renderSummary(parsedPlayers, selectedSkills);
+  renderChart(parsedPlayers, weightsEnabled);
+  renderSummary(parsedPlayers, selectedSkills, weights, weightsEnabled);
 }
 
 

@@ -264,3 +264,42 @@ button:hover {
   margin: 0;
   accent-color: #ff7a00;
 }
+
+.skill-weight-row {
+  display: grid !important;
+  grid-template-columns: 1fr 58px;
+  align-items: center;
+  gap: 8px;
+}
+
+.skill-weight-row span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.skill-weight {
+  width: 58px;
+  height: 24px;
+  margin: 0;
+  padding: 2px 5px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.use-weights-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 12px 0;
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff8c9;
+}
+
+.use-weights-label input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #ff7a00;
+}

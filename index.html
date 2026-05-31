@@ -22,16 +22,52 @@
     <section class="panel">
       <h2>Compared skills</h2>
 
-      <div class="skill-grid">
-        <label><input type="checkbox" class="skill-checkbox" value="Aim" checked> Aim</label>
-        <label><input type="checkbox" class="skill-checkbox" value="Handling" checked> Handling</label>
-        <label><input type="checkbox" class="skill-checkbox" value="Quickness" checked> Quickness</label>
-        <label><input type="checkbox" class="skill-checkbox" value="Determination" checked> Determination</label>
-        <label><input type="checkbox" class="skill-checkbox" value="Awareness" checked> Awareness</label>
-        <label><input type="checkbox" class="skill-checkbox" value="Teamplay" checked> Teamplay</label>
-        <label><input type="checkbox" class="skill-checkbox" value="Gamesense" checked> Gamesense</label>
-        <label><input type="checkbox" class="skill-checkbox" value="Movement" checked> Movement</label>
-      </div>
+  <div class="skill-grid">
+    <label class="skill-weight-row">
+      <span><input type="checkbox" class="skill-checkbox" value="Aim" checked> Aim</span>
+      <input class="skill-weight" data-skill="Aim" type="number" value="1" min="0" step="0.1">
+    </label>
+
+    <label class="skill-weight-row">
+      <span><input type="checkbox" class="skill-checkbox" value="Handling" checked> Handling</span>
+      <input class="skill-weight" data-skill="Handling" type="number" value="1" min="0" step="0.1">
+    </label>
+
+    <label class="skill-weight-row">
+      <span><input type="checkbox" class="skill-checkbox" value="Quickness" checked> Quickness</span>
+      <input class="skill-weight" data-skill="Quickness" type="number" value="1" min="0" step="0.1">
+    </label>
+
+    <label class="skill-weight-row">
+      <span><input type="checkbox" class="skill-checkbox" value="Determination" checked> Determination</span>
+      <input class="skill-weight" data-skill="Determination" type="number" value="1" min="0" step="0.1">
+    </label>
+
+    <label class="skill-weight-row">
+      <span><input type="checkbox" class="skill-checkbox" value="Awareness" checked> Awareness</span>
+      <input class="skill-weight" data-skill="Awareness" type="number" value="1" min="0" step="0.1">
+    </label>
+
+    <label class="skill-weight-row">
+      <span><input type="checkbox" class="skill-checkbox" value="Teamplay" checked> Teamplay</span>
+      <input class="skill-weight" data-skill="Teamplay" type="number" value="1" min="0" step="0.1">
+    </label>
+
+    <label class="skill-weight-row">
+      <span><input type="checkbox" class="skill-checkbox" value="Gamesense" checked> Gamesense</span>
+      <input class="skill-weight" data-skill="Gamesense" type="number" value="1" min="0" step="0.1">
+    </label>
+
+    <label class="skill-weight-row">
+      <span><input type="checkbox" class="skill-checkbox" value="Movement" checked> Movement</span>
+      <input class="skill-weight" data-skill="Movement" type="number" value="1" min="0" step="0.1">
+    </label>
+  </div>
+
+  <label class="use-weights-label">
+    <input id="use-skill-weights" type="checkbox">
+    Use weighted score
+  </label>
 
       <div class="options-grid">
         <label>
