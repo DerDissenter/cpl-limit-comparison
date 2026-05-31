@@ -118,18 +118,26 @@ function getSelectedSkills() {
     .map(checkbox => checkbox.value);
 }
 
-function getHeartBonusByGames(games) {
-  if (games >= 800) return 0.08;
-  if (games >= 400) return 0.05;
-  if (games >= 200) return 0.03;
-  if (games >= 100) return 0.01;
-  if (games >= 50) return 0.005;
+function getHeartBonusByGames(games, loyal = false) {
+  const multiplier = loyal ? 0.75 : 1;
+
+  const tinyReq = Math.floor(50 * multiplier);
+  const smallReq = Math.floor(100 * multiplier);
+  const bigReq = Math.floor(200 * multiplier);
+  const goldReq = Math.floor(400 * multiplier);
+  const platReq = Math.floor(800 * multiplier);
+
+  if (games >= platReq) return 0.08;
+  if (games >= goldReq) return 0.05;
+  if (games >= bigReq) return 0.03;
+  if (games >= smallReq) return 0.01;
+  if (games >= tinyReq) return 0.005;
   return 0;
 }
 
-function getHeartBonus(games, mode) {
+function getHeartBonus(games, mode, loyal = false) {
   if (mode === "constant4") return 0.04;
-  return getHeartBonusByGames(games);
+  return getHeartBonusByGames(games, loyal);
 }
 
 function getSelectedLimitAverage(player, selectedSkills) {
@@ -166,13 +174,13 @@ function getAgeAtSeason(playerAgeText, seasonOffset) {
   return `${ageAtSeason}yo`;
 }
 
-function buildProjection(player, selectedSkills, startGames, heartMode, gamesPerSeason, seasonCount) {
+function buildProjection(player, selectedSkills, startGames, heartMode, gamesPerSeason, seasonCount, loyal = false) {
   const baseLimit = getSelectedLimitAverage(player, selectedSkills);
   const result = [];
 
   for (let season = 0; season <= seasonCount; season++) {
     const games = startGames + season * gamesPerSeason;
-    const heartBonus = getHeartBonus(games, heartMode);
+    const heartBonus = getHeartBonus(games, heartMode, loyal);
     const effectiveLimit = baseLimit * (1 + heartBonus);
 
     result.push({
@@ -180,7 +188,8 @@ function buildProjection(player, selectedSkills, startGames, heartMode, gamesPer
       games,
       baseLimit,
       heartBonus,
-      effectiveLimit
+      effectiveLimit,
+      loyal
     });
   }
 
@@ -262,12 +271,13 @@ function renderChart(players) {
               const player = players[context.datasetIndex];
               const point = player.projection[context.dataIndex];
 
-              return [
-                `Games: ${point.games}`,
-                `Age: ${getAgeAtSeason(player.playerAge, point.season)}`,
-                `Base Limit: ${point.baseLimit.toFixed(2)}`,
-                `Heart: ${(point.heartBonus * 100).toFixed(1)}%`
-              ];
+            return [
+            `Games: ${point.games}`,
+            `Age: ${getAgeAtSeason(player.playerAge, point.season)}`,
+            `Base Limit: ${point.baseLimit.toFixed(2)}`,
+            `Heart: ${(point.heartBonus * 100).toFixed(1)}%`,
+            `Loyal: ${player.loyal ? "Yes" : "No"}`
+            ];
             }
           }
         }
@@ -309,6 +319,7 @@ function renderSummary(players, selectedSkills) {
         ${start.effectiveLimit.toFixed(2)} → ${end.effectiveLimit.toFixed(2)}
         <br>
         Base Limit: ${start.baseLimit.toFixed(2)}
+        Loyal: ${player.loyal ? "Yes" : "No"}
         ${warning}
       </p>
     `;
@@ -380,6 +391,10 @@ function createPlayerCard(initialData = {}) {
         <option value="constant4" ${initialData.heartMode === "constant4" ? "selected" : ""}>Constant 4%</option>
       </select>
     </label>
+    <label class="player-loyal-label">
+  <input class="player-loyal" type="checkbox" ${initialData.loyal ? "checked" : ""}>
+  Loyal
+</label>
   `;
 
   card.querySelector(".remove-player-button").addEventListener("click", () => {
@@ -410,12 +425,14 @@ function getPlayerInputs() {
     const inputText = card.querySelector(".player-input")?.value.trim() || "";
     const startGames = Number(card.querySelector(".player-games")?.value) || 0;
     const heartMode = card.querySelector(".player-heart-mode")?.value || "progressive";
+    const loyal = card.querySelector(".player-loyal")?.checked || false;
 
     return {
-      index,
-      inputText,
-      startGames,
-      heartMode
+    index,
+    inputText,
+    startGames,
+    heartMode,
+    loyal
     };
   });
 }
@@ -446,19 +463,21 @@ function runComparison() {
 
       if (!player.skills.length) return null;
 
-      return {
-        ...player,
-        startGames: playerInput.startGames,
-        heartMode: playerInput.heartMode,
-        projection: buildProjection(
-          player,
-          selectedSkills,
-          playerInput.startGames,
-          playerInput.heartMode,
-          gamesPerSeason,
-          seasonCount
-        )
-      };
+    return {
+    ...player,
+    startGames: playerInput.startGames,
+    heartMode: playerInput.heartMode,
+    loyal: playerInput.loyal,
+    projection: buildProjection(
+        player,
+        selectedSkills,
+        playerInput.startGames,
+        playerInput.heartMode,
+        gamesPerSeason,
+        seasonCount,
+        playerInput.loyal
+    )
+    };
     })
     .filter(Boolean);
 
@@ -470,6 +489,7 @@ function runComparison() {
   renderChart(parsedPlayers);
   renderSummary(parsedPlayers, selectedSkills);
 }
+
 
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
