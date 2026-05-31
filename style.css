@@ -214,3 +214,37 @@ button:hover {
     grid-template-columns: 1fr;
   }
 }
+
+.player-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+#add-player-button {
+  width: auto;
+  min-width: 110px;
+}
+
+.player-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.player-card-header h2 {
+  margin: 0;
+}
+
+.remove-player-button {
+  width: auto;
+  height: 24px;
+  padding: 0 10px;
+  background: #3a3a3a;
+  font-size: 10px;
+}
+
+.remove-player-button:hover {
+  background: #b83737;
+}

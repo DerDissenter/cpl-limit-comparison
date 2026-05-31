@@ -13,43 +13,11 @@
   <main class="app">
     <h1>CPL Limit Comparison</h1>
 
-    <section class="player-grid">
-      <div class="panel">
-        <h2>Player 1</h2>
-        <textarea id="player1-input" placeholder="Paste player 1 here"></textarea>
+<section class="player-toolbar">
+  <button id="add-player-button" type="button">+ Add player</button>
+</section>
 
-        <label>
-          Start games
-          <input id="player1-games" type="number" value="0" min="0">
-        </label>
-
-        <label>
-          Heart mode
-          <select id="player1-heart-mode">
-            <option value="progressive">Progressive</option>
-            <option value="constant4">Constant 4%</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="panel">
-        <h2>Player 2</h2>
-        <textarea id="player2-input" placeholder="Paste player 2 here"></textarea>
-
-        <label>
-          Start games
-          <input id="player2-games" type="number" value="0" min="0">
-        </label>
-
-        <label>
-          Heart mode
-          <select id="player2-heart-mode">
-            <option value="progressive">Progressive</option>
-            <option value="constant4">Constant 4%</option>
-          </select>
-        </label>
-      </div>
-    </section>
+<section id="players-container" class="player-grid"></section>
 
     <section class="panel">
       <h2>Compared skills</h2>
