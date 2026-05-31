@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CPL Limit Comparison</title>
+
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <main class="app">
+    <h1>CPL Limit Comparison</h1>
+
+    <section class="player-grid">
+      <div class="panel">
+        <h2>Player 1</h2>
+        <textarea id="player1-input" placeholder="Paste player 1 here"></textarea>
+
+        <label>
+          Start games
+          <input id="player1-games" type="number" value="0" min="0">
+        </label>
+
+        <label>
+          Heart mode
+          <select id="player1-heart-mode">
+            <option value="progressive">Progressive</option>
+            <option value="constant4">Constant 4%</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="panel">
+        <h2>Player 2</h2>
+        <textarea id="player2-input" placeholder="Paste player 2 here"></textarea>
+
+        <label>
+          Start games
+          <input id="player2-games" type="number" value="0" min="0">
+        </label>
+
+        <label>
+          Heart mode
+          <select id="player2-heart-mode">
+            <option value="progressive">Progressive</option>
+            <option value="constant4">Constant 4%</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Compared skills</h2>
+
+      <div class="skill-grid">
+        <label><input type="checkbox" class="skill-checkbox" value="Aim" checked> Aim</label>
+        <label><input type="checkbox" class="skill-checkbox" value="Handling" checked> Handling</label>
+        <label><input type="checkbox" class="skill-checkbox" value="Quickness" checked> Quickness</label>
+        <label><input type="checkbox" class="skill-checkbox" value="Determination" checked> Determination</label>
+        <label><input type="checkbox" class="skill-checkbox" value="Awareness" checked> Awareness</label>
+        <label><input type="checkbox" class="skill-checkbox" value="Teamplay" checked> Teamplay</label>
+        <label><input type="checkbox" class="skill-checkbox" value="Gamesense" checked> Gamesense</label>
+        <label><input type="checkbox" class="skill-checkbox" value="Movement" checked> Movement</label>
+      </div>
+
+      <div class="options-grid">
+        <label>
+          Games per season
+          <input id="games-per-season" type="number" value="57" min="1">
+        </label>
+
+        <label>
+          Seasons
+          <input id="season-count" type="number" value="15" min="1">
+        </label>
+
+        <button id="compare-button">Compare</button>
+      </div>
+    </section>
+
+    <section class="panel chart-panel">
+      <canvas id="comparison-chart"></canvas>
+    </section>
+
+    <section id="summary" class="panel"></section>
+  </main>
+
+  <script src="main.js"></script>
+</body>
+</html>
