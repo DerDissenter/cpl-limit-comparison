@@ -1,79 +1,216 @@
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
-  background: #080a0d;
-  color: #f5f5dc;
-  font-family: Arial, sans-serif;
+  min-height: 100vh;
+  background: #050608;
+  color: #f5f1c8;
+  font-family: "Poppins", Arial, sans-serif;
+  font-size: 12px;
 }
 
 .app {
-  max-width: 980px;
-  margin: 32px auto;
-  padding: 24px;
+  width: 920px;
+  margin: 20px auto;
+  padding: 18px;
   background: #202124;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 18px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.35), 0 12px 32px rgba(0,0,0,0.45);
+}
+
+h1 {
+  margin: 0 0 18px 0;
+  color: #ffffff;
+  font-size: 21px;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+h2 {
+  margin: 0 0 10px 0;
+  color: #fff8c9;
+  font-size: 13px;
+  line-height: 1.1;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 
 .player-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .panel {
   background: #171819;
-  border: 1px solid #333;
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 14px;
-  padding: 16px;
-  margin-bottom: 16px;
+  padding: 12px;
+  margin-bottom: 14px;
 }
 
 textarea {
   width: 100%;
-  height: 150px;
+  height: 138px;
+  resize: vertical;
+  display: block;
+
   background: #eee8d5;
   color: #111;
+  border: none;
+  border-radius: 7px;
+  padding: 8px;
+
+  font-family: "Poppins", Arial, sans-serif;
+  font-size: 11px;
+  line-height: 1.35;
+  outline: none;
 }
 
 label {
   display: block;
-  margin-top: 10px;
+  margin-top: 8px;
+  color: #fff8c9;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 input,
 select {
   width: 100%;
-  height: 30px;
-  box-sizing: border-box;
+  height: 28px;
+  margin-top: 4px;
+  padding: 3px 7px;
+
+  background: #eee8d5;
+  color: #111;
+  border: none;
+  border-radius: 6px;
+  outline: none;
+
+  font-family: "Poppins", Arial, sans-serif;
+  font-size: 11px;
+}
+
+select {
+  cursor: pointer;
 }
 
 .skill-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  gap: 7px 18px;
+  margin-top: 8px;
+  margin-bottom: 14px;
+}
+
+.skill-grid label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  margin: 0;
+  color: #fff8c9;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.skill-grid input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  padding: 0;
+  accent-color: #ff7a00;
+  cursor: pointer;
 }
 
 .options-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr 96px;
   gap: 12px;
   align-items: end;
-  margin-top: 16px;
+  margin-top: 4px;
+}
+
+.options-grid label {
+  margin: 0;
 }
 
 button {
-  height: 32px;
+  height: 28px;
+  padding: 0 14px;
+
   background: #ff7a00;
-  color: white;
+  color: #ffffff;
   border: none;
   border-radius: 8px;
-  font-weight: bold;
+
+  font-family: "Poppins", Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 800;
   cursor: pointer;
 }
 
+button:hover {
+  filter: brightness(1.12);
+}
+
 .chart-panel {
-  min-height: 320px;
+  padding: 12px;
+  min-height: 286px;
 }
 
 #comparison-chart {
-  max-height: 320px;
+  width: 100% !important;
+  max-height: 285px;
+
+  background: #18191a;
+  border-radius: 12px;
+}
+
+#summary {
+  color: #fff8c9;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+#summary h2 {
+  margin-bottom: 12px;
+  color: #ffffff;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+#summary p {
+  margin: 7px 0;
+}
+
+#summary strong {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+@media (max-width: 960px) {
+  .app {
+    width: calc(100% - 24px);
+    margin: 12px;
+  }
+
+  .player-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .skill-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .options-grid {
+    grid-template-columns: 1fr;
+  }
 }
