@@ -127,12 +127,21 @@ function getSkillWeights() {
 
   document.querySelectorAll(".skill-weight").forEach(input => {
     const skillName = input.dataset.skill;
-    const value = Number(input.value);
+    const value = parseDecimalInput(input.value);
 
-    weights[skillName] = !Number.isNaN(value) && value > 0 ? value : 0;
+    weights[skillName] = value > 0 ? value : 0;
   });
 
   return weights;
+}
+function parseDecimalInput(value) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(",", ".");
+
+  const number = Number(normalized);
+
+  return Number.isNaN(number) ? 0 : number;
 }
 
 function getHeartBonusByGames(games, loyal = false) {
@@ -766,10 +775,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.querySelectorAll(".skill-weight").forEach(input => {
-      if (savedState.weights?.[input.dataset.skill] !== undefined) {
-        input.value = String(savedState.weights[input.dataset.skill]).replace(".", ",");
-      }
-    });
+  const savedWeight = savedState.weights?.[input.dataset.skill];
+
+  if (savedWeight !== undefined && savedWeight !== null) {
+    input.value = String(savedWeight);
+  }
+});
 
     const useWeightsInput = document.getElementById("use-skill-weights");
     if (useWeightsInput) {
