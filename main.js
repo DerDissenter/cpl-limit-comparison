@@ -157,7 +157,7 @@ function getHeartBonus(games, mode, loyal = false) {
   return getHeartBonusByGames(games, loyal);
 }
 
-function getSelectedLimitAverage(player, selectedSkills, weights = {}, weightsEnabled = false) {
+function getSelectedLimitAverage(player, selectedSkills, weights = {}, weightsEnabled = false, abilities = {}) {
   let weightedSum = 0;
   let totalWeight = 0;
 
@@ -168,12 +168,15 @@ function getSelectedLimitAverage(player, selectedSkills, weights = {}, weightsEn
       return;
     }
 
-    const limit = Number(skill.max);
+    const rawLimit = Number(skill.max);
+    const modifier = getAbilityModifierForSkill(skillName, abilities);
+    const adjustedLimit = rawLimit * (1 + modifier);
+
     const weight = weightsEnabled ? Number(weights[skillName] || 0) : 1;
 
     if (weight <= 0) return;
 
-    weightedSum += limit * weight;
+    weightedSum += adjustedLimit * weight;
     totalWeight += weight;
   });
 
@@ -203,8 +206,19 @@ function getAgeAtSeason(playerAgeText, seasonOffset) {
   return `${ageAtSeason}yo`;
 }
 
-function buildProjection(player, selectedSkills, startGames, heartMode, gamesPerSeason, seasonCount, loyal = false, weights = {}, weightsEnabled = false) {
-  const baseLimit = getSelectedLimitAverage(player, selectedSkills, weights, weightsEnabled);
+function buildProjection(
+  player,
+  selectedSkills,
+  startGames,
+  heartMode,
+  gamesPerSeason,
+  seasonCount,
+  loyal = false,
+  weights = {},
+  weightsEnabled = false,
+  abilities = {}
+) {
+  const baseLimit = getSelectedLimitAverage(player, selectedSkills, weights, weightsEnabled, abilities);
   const result = [];
 
   for (let season = 0; season <= seasonCount; season++) {
@@ -307,7 +321,9 @@ function renderChart(players, weightsEnabled = false) {
                 `Age: ${getAgeAtSeason(player.playerAge, point.season)}`,
                 `${weightsEnabled ? "Base Weighted Score" : "Base Limit"}: ${point.baseLimit.toFixed(2)}`,
                 `Heart: ${(point.heartBonus * 100).toFixed(1)}%`,
-                `Loyal: ${player.loyal ? "Yes" : "No"}`
+                `Loyal: ${player.loyal ? "Yes" : "No"}`,
+                `Fragger: ${player.fragger ? "Yes" : "No"}`,
+                `Tryhard: ${player.tryhard ? "Yes" : "No"}`
                 ];
                 }
             }
@@ -356,7 +372,13 @@ function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = f
         ${start.effectiveLimit.toFixed(2)} → ${end.effectiveLimit.toFixed(2)}
         <br>
         ${weightsEnabled ? "Base Weighted Score" : "Base Limit"}: ${start.baseLimit.toFixed(2)}
-        Loyal: ${player.loyal ? "Yes" : "No"}
+        <br>
+        Abilities:
+        ${[
+          player.loyal ? "Loyal" : null,
+          player.fragger ? "Fragger" : null,
+          player.tryhard ? "Tryhard" : null
+        ].filter(Boolean).join(", ") || "None"}
         ${warning}
       </p>
     `;
@@ -430,10 +452,20 @@ function createPlayerCard(initialData = {}) {
         <option value="constant4" ${initialData.heartMode === "constant4" ? "selected" : ""}>Constant 4%</option>
       </select>
     </label>
-    <label class="player-loyal-label">
-  <input class="player-loyal" type="checkbox" ${initialData.loyal ? "checked" : ""}>
-  Loyal
-</label>
+  <label class="player-ability-label">
+    <input class="player-loyal" type="checkbox" ${initialData.loyal ? "checked" : ""}>
+    Loyal
+  </label>
+
+  <label class="player-ability-label">
+    <input class="player-fragger" type="checkbox" ${initialData.fragger ? "checked" : ""}>
+    Fragger
+  </label>
+
+  <label class="player-ability-label">
+    <input class="player-tryhard" type="checkbox" ${initialData.tryhard ? "checked" : ""}>
+    Tryhard
+  </label>
   `;
 
   card.querySelector(".remove-player-button").addEventListener("click", () => {
@@ -465,13 +497,18 @@ function getPlayerInputs() {
     const startGames = Number(card.querySelector(".player-games")?.value) || 0;
     const heartMode = card.querySelector(".player-heart-mode")?.value || "progressive";
     const loyal = card.querySelector(".player-loyal")?.checked || false;
+    const fragger = card.querySelector(".player-fragger")?.checked || false;
+    const tryhard = card.querySelector(".player-tryhard")?.checked || false;
+    
 
     return {
-    index,
-    inputText,
-    startGames,
-    heartMode,
-    loyal
+      index,
+      inputText,
+      startGames,
+      heartMode,
+      loyal,
+      fragger,
+      tryhard
     };
   });
 }
@@ -500,26 +537,33 @@ function runComparison() {
       if (!playerInput.inputText) return null;
 
       const player = parsePlayerText(playerInput.inputText);
+      const abilities = {
+        fragger: playerInput.fragger,
+        tryhard: playerInput.tryhard
+      };
 
       if (!player.skills.length) return null;
 
-    return {
-    ...player,
-    startGames: playerInput.startGames,
-    heartMode: playerInput.heartMode,
-    loyal: playerInput.loyal,
-    projection: buildProjection(
-        player,
-        selectedSkills,
-        playerInput.startGames,
-        playerInput.heartMode,
-        gamesPerSeason,
-        seasonCount,
-        playerInput.loyal,
-        weights,
-        weightsEnabled
-    )
-    };
+      return {
+        ...player,
+        startGames: playerInput.startGames,
+        heartMode: playerInput.heartMode,
+        loyal: playerInput.loyal,
+        fragger: playerInput.fragger,
+        tryhard: playerInput.tryhard,
+        projection: buildProjection(
+          player,
+          selectedSkills,
+          playerInput.startGames,
+          playerInput.heartMode,
+          gamesPerSeason,
+          seasonCount,
+          playerInput.loyal,
+          weights,
+          weightsEnabled,
+          abilities
+        )
+      };
     })
     .filter(Boolean);
 
@@ -532,6 +576,27 @@ function runComparison() {
   renderSummary(parsedPlayers, selectedSkills, weights, weightsEnabled);
 }
 
+function getAbilityModifierForSkill(skillName, abilities = {}) {
+  let modifier = 0;
+
+  if (abilities.fragger) {
+    if (["Movement", "Quickness", "Determination"].includes(skillName)) {
+      modifier += 0.02;
+    }
+
+    if (["Teamplay", "Gamesense", "Awareness"].includes(skillName)) {
+      modifier -= 0.02;
+    }
+  }
+
+  if (abilities.tryhard) {
+    if (["Aim", "Quickness", "Determination"].includes(skillName)) {
+      modifier += 0.02;
+    }
+  }
+
+  return modifier;
+}
 
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
