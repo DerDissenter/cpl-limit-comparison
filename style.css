@@ -320,3 +320,32 @@ button:hover {
   margin: 0;
   accent-color: #ff7a00;
 }
+.saved-player-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.saved-player-row select {
+  height: 26px;
+  margin: 0;
+}
+
+.saved-player-row button {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+.save-player-button {
+  background: #2d8a4e;
+}
+
+.delete-saved-player-button {
+  background: #8a2d2d;
+}
+
+.load-saved-player-button {
+  background: #3a3a3a;
+}

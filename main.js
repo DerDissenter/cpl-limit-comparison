@@ -437,6 +437,15 @@ function createPlayerCard(initialData = {}) {
       <h2>Player ${playerId}</h2>
       <button type="button" class="remove-player-button">Remove</button>
     </div>
+    <div class="saved-player-row">
+      <select class="saved-player-select">
+        <option value="">Saved players...</option>
+      </select>
+
+      <button type="button" class="load-saved-player-button">Load</button>
+      <button type="button" class="save-player-button">Save</button>
+      <button type="button" class="delete-saved-player-button">Delete</button>
+    </div>
 
     <textarea class="player-input" placeholder="Paste player here">${escapeHtml(initialData.text || "")}</textarea>
 
@@ -479,9 +488,44 @@ function createPlayerCard(initialData = {}) {
     card.remove();
     updatePlayerCardTitles();
   });
+  card.querySelector(".save-player-button").addEventListener("click", () => {
+  const text = card.querySelector(".player-input").value.trim();
+  savePlayerToStorage(text);
+  });
+
+  card.querySelector(".load-saved-player-button").addEventListener("click", () => {
+    const select = card.querySelector(".saved-player-select");
+    const playerId = select.value;
+
+    if (!playerId) return;
+
+    const savedPlayer = getSavedPlayers().find(player => player.id === playerId);
+
+    if (!savedPlayer) return;
+
+    card.querySelector(".player-input").value = savedPlayer.text;
+  });
+
+  card.querySelector(".delete-saved-player-button").addEventListener("click", () => {
+    const select = card.querySelector(".saved-player-select");
+    const playerId = select.value;
+
+    if (!playerId) return;
+
+    const savedPlayer = getSavedPlayers().find(player => player.id === playerId);
+
+    if (!savedPlayer) return;
+
+    const confirmed = confirm(`Delete saved player "${savedPlayer.name}"?`);
+
+    if (!confirmed) return;
+
+    deleteSavedPlayer(playerId);
+  });
 
   container.appendChild(card);
   updatePlayerCardTitles();
+  refreshSavedPlayerSelects();
 }
 
 function updatePlayerCardTitles() {
@@ -574,6 +618,7 @@ function runComparison() {
 
   renderChart(parsedPlayers, weightsEnabled);
   renderSummary(parsedPlayers, selectedSkills, weights, weightsEnabled);
+  saveAppState();
 }
 
 function getAbilityModifierForSkill(skillName, abilities = {}) {
@@ -597,13 +642,138 @@ function getAbilityModifierForSkill(skillName, abilities = {}) {
 
   return modifier;
 }
+const SAVED_PLAYERS_KEY = "cplLimitComparison.savedPlayers";
+
+function getSavedPlayers() {
+  try {
+    return JSON.parse(localStorage.getItem(SAVED_PLAYERS_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function setSavedPlayers(players) {
+  localStorage.setItem(SAVED_PLAYERS_KEY, JSON.stringify(players));
+}
+
+function savePlayerToStorage(playerText) {
+  const parsed = parsePlayerText(playerText);
+
+  if (!playerText.trim() || !parsed.skills.length) {
+    alert("Cannot save invalid player data.");
+    return;
+  }
+
+  const savedPlayers = getSavedPlayers();
+  const playerName = parsed.playerName || "Unknown Player";
+
+  const existingIndex = savedPlayers.findIndex(player => player.name === playerName);
+
+  const savedPlayer = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name: playerName,
+    age: parsed.playerAge,
+    text: playerText,
+    savedAt: new Date().toISOString()
+  };
+
+  if (existingIndex >= 0) {
+    savedPlayers[existingIndex] = {
+      ...savedPlayers[existingIndex],
+      ...savedPlayer,
+      id: savedPlayers[existingIndex].id
+    };
+  } else {
+    savedPlayers.push(savedPlayer);
+  }
+
+  setSavedPlayers(savedPlayers);
+  refreshSavedPlayerSelects();
+}
+
+function deleteSavedPlayer(playerId) {
+  const savedPlayers = getSavedPlayers().filter(player => player.id !== playerId);
+  setSavedPlayers(savedPlayers);
+  refreshSavedPlayerSelects();
+}
+
+function refreshSavedPlayerSelects() {
+  const savedPlayers = getSavedPlayers();
+
+  document.querySelectorAll(".saved-player-select").forEach(select => {
+    const currentValue = select.value;
+
+    select.innerHTML = `
+      <option value="">Saved players...</option>
+      ${savedPlayers
+        .map(player => `<option value="${escapeHtml(player.id)}">${escapeHtml(player.name)}</option>`)
+        .join("")}
+    `;
+
+    if (savedPlayers.some(player => player.id === currentValue)) {
+      select.value = currentValue;
+    }
+  });
+}
+const APP_STATE_KEY = "cplLimitComparison.lastState";
+
+function saveAppState() {
+  const state = {
+    players: getPlayerInputs().map(player => ({
+      text: player.inputText,
+      startGames: player.startGames,
+      heartMode: player.heartMode,
+      loyal: player.loyal,
+      fragger: player.fragger,
+      tryhard: player.tryhard
+    })),
+    selectedSkills: getSelectedSkills(),
+    weights: getSkillWeights(),
+    weightsEnabled: useSkillWeights(),
+    gamesPerSeason: document.getElementById("games-per-season")?.value || "57",
+    seasonCount: document.getElementById("season-count")?.value || "15"
+  };
+
+  localStorage.setItem(APP_STATE_KEY, JSON.stringify(state));
+}
+
+function loadAppState() {
+  try {
+    return JSON.parse(localStorage.getItem(APP_STATE_KEY));
+  } catch {
+    return null;
+  }
+}
 
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
   document.getElementById("add-player-button")?.addEventListener("click", () => createPlayerCard());
 
-  if (!document.querySelector(".player-panel")) {
+  const savedState = loadAppState();
+
+  if (savedState?.players?.length) {
+    savedState.players.forEach(player => createPlayerCard(player));
+  } else {
     createPlayerCard();
     createPlayerCard();
+  }
+  if (savedState) {
+    document.getElementById("games-per-season").value = savedState.gamesPerSeason || "57";
+    document.getElementById("season-count").value = savedState.seasonCount || "15";
+
+    document.querySelectorAll(".skill-checkbox").forEach(checkbox => {
+      checkbox.checked = savedState.selectedSkills?.includes(checkbox.value) ?? true;
+    });
+
+    document.querySelectorAll(".skill-weight").forEach(input => {
+      if (savedState.weights?.[input.dataset.skill] !== undefined) {
+        input.value = String(savedState.weights[input.dataset.skill]).replace(".", ",");
+      }
+    });
+
+    const useWeightsInput = document.getElementById("use-skill-weights");
+    if (useWeightsInput) {
+      useWeightsInput.checked = !!savedState.weightsEnabled;
+    }
   }
 });
