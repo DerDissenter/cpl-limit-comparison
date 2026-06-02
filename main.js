@@ -1,5 +1,6 @@
 let comparisonChart = null;
 let playerCounter = 0;
+const MAX_PLAYER_AGE = 40;
 
 const SKILL_NAMES = [
   "Aim",
@@ -21,6 +22,83 @@ const MOBILE_ALIAS = {
   TMP: "Teamplay",
   GMS: "Gamesense",
   MOV: "Movement"
+};
+
+const NORMAL_AGE_DECAY = {
+  21: 30,
+  22: 30,
+  23: 30,
+  24: 30,
+  25: 28,
+  26: 28,
+  27: 28,
+  28: 22,
+  29: 15,
+  30: 5,
+  31: -1,
+  32: -7,
+  33: -15,
+  34: -22,
+  35: -30,
+  36: -38,
+  37: -45,
+  38: -52,
+  39: -60,
+  40: -66
+};
+
+const ANALYSIS_AGE_DECAY = {
+  21: 64,
+  22: 64,
+  23: 64,
+  24: 64,
+  25: 63,
+  26: 63,
+  27: 63,
+  28: 56,
+  29: 49,
+  30: 40,
+  31: 33,
+  32: 26,
+  33: 19,
+  34: 12,
+  35: 3,
+  36: -3,
+  37: -10,
+  38: -17,
+  39: -24,
+  40: -31
+};
+
+const maxAgeMarkerPlugin = {
+  id: "maxAgeMarker",
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+
+    ctx.save();
+    ctx.font = "15px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+
+    chart.data.datasets.forEach((dataset, datasetIndex) => {
+      const meta = chart.getDatasetMeta(datasetIndex);
+
+      (dataset.maxAgeIndexes || []).forEach(dataIndex => {
+        const point = dataset.projectionPoints?.[dataIndex];
+        if (!point?.maxAgeReached) return;
+
+        const element = meta.data[dataIndex];
+        if (!element) return;
+
+        const { x, y } = element.getProps(["x", "y"], true);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+        ctx.fillText("40", x, y - 8);
+      });
+    });
+
+    ctx.restore();
+  }
 };
 
 function escapeHtml(value) {
@@ -122,6 +200,14 @@ function useSkillWeights() {
   return document.getElementById("use-skill-weights")?.checked || false;
 }
 
+function shouldApplyAgeDecay() {
+  return document.getElementById("apply-age-decay")?.checked || false;
+}
+
+function shouldUseAnalysisFeature() {
+  return document.getElementById("use-analysis-feature")?.checked || false;
+}
+
 function getSkillWeights() {
   const weights = {};
 
@@ -201,6 +287,44 @@ function getMissingLimits(player, selectedSkills) {
   });
 }
 
+function getTotalLimit(player) {
+  return player.skills.reduce((total, skill) => {
+    const limit = Number(skill.max);
+    return total + (Number.isNaN(limit) || skill.max === null ? 0 : limit);
+  }, 0);
+}
+
+function getAgeNumberAtSeason(playerAgeText, seasonOffset) {
+  const { age } = parseAgeString(playerAgeText);
+  return age === null ? null : age + seasonOffset;
+}
+
+function isPastMaxAge(playerAgeText, seasonOffset) {
+  const age = getAgeNumberAtSeason(playerAgeText, seasonOffset);
+  return age !== null && age > MAX_PLAYER_AGE;
+}
+
+function getAgeDecayValue(age, useAnalysisFeature = false) {
+  const table = useAnalysisFeature ? ANALYSIS_AGE_DECAY : NORMAL_AGE_DECAY;
+  return table[age] ?? 0;
+}
+
+function getAgeDecayDetails(player, seasonOffset, applyAgeDecay = false, useAnalysisFeature = false) {
+  const age = getAgeNumberAtSeason(player.playerAge, seasonOffset);
+  const totalLimit = getTotalLimit(player);
+  const tableValue = age === null ? 0 : getAgeDecayValue(age, useAnalysisFeature);
+  const absoluteDecay = applyAgeDecay && tableValue < 0 ? Math.abs(tableValue) : 0;
+  const decayPercent = totalLimit > 0 ? absoluteDecay / totalLimit : 0;
+
+  return {
+    age,
+    totalLimit,
+    tableValue,
+    absoluteDecay,
+    decayPercent
+  };
+}
+
 function getAgeAtSeason(playerAgeText, seasonOffset) {
   const { age, birthdayDay } = parseAgeString(playerAgeText);
 
@@ -225,21 +349,33 @@ function buildProjection(
   loyal = false,
   weights = {},
   weightsEnabled = false,
-  abilities = {}
+  abilities = {},
+  applyAgeDecay = false,
+  useAnalysisFeature = false
 ) {
   const baseLimit = getSelectedLimitAverage(player, selectedSkills, weights, weightsEnabled, abilities);
   const result = [];
 
   for (let season = 0; season <= seasonCount; season++) {
+    if (isPastMaxAge(player.playerAge, season)) {
+      break;
+    }
+
     const games = startGames + season * gamesPerSeason;
     const heartBonus = getHeartBonus(games, heartMode, loyal);
-    const effectiveLimit = baseLimit * (1 + heartBonus);
+    const scoreBeforeDecay = baseLimit * (1 + heartBonus);
+    const ageDecay = getAgeDecayDetails(player, season, applyAgeDecay, useAnalysisFeature);
+    const maxAgeReached = ageDecay.age === MAX_PLAYER_AGE;
+    const effectiveLimit = scoreBeforeDecay * (1 - ageDecay.decayPercent);
 
     result.push({
       season,
       games,
       baseLimit,
       heartBonus,
+      scoreBeforeDecay,
+      ageDecay,
+      maxAgeReached,
       effectiveLimit,
       loyal
     });
@@ -250,10 +386,17 @@ function buildProjection(
 
 function getBestPlayerAtSeason(players, seasonIndex) {
   return players
-    .map(player => ({
-      player,
-      value: player.projection[seasonIndex].effectiveLimit
-    }))
+    .map(player => {
+      const point = player.projection.find(item => item.season === seasonIndex);
+
+      return point
+        ? {
+            player,
+            value: point.effectiveLimit
+          }
+        : null;
+    })
+    .filter(Boolean)
     .sort((a, b) => b.value - a.value)[0];
 }
 
@@ -261,10 +404,12 @@ function getLeaderChanges(players) {
   const changes = [];
   let previousLeader = null;
 
-  const seasonLength = players[0]?.projection.length || 0;
+  const lastSeason = getLastProjectionSeason(players);
 
-  for (let i = 0; i < seasonLength; i++) {
-    const leader = getBestPlayerAtSeason(players, i);
+  for (let season = 0; season <= lastSeason; season++) {
+    const leader = getBestPlayerAtSeason(players, season);
+
+    if (!leader) continue;
 
     if (!previousLeader) {
       previousLeader = leader.player.playerName;
@@ -273,7 +418,7 @@ function getLeaderChanges(players) {
 
     if (leader.player.playerName !== previousLeader) {
       changes.push({
-        season: players[0].projection[i].season,
+        season,
         playerName: leader.player.playerName,
         value: leader.value
       });
@@ -285,7 +430,18 @@ function getLeaderChanges(players) {
   return changes;
 }
 
-function renderChart(players, weightsEnabled = false) {
+function getLastProjectionSeason(players) {
+  return Math.max(
+    0,
+    ...players.map(player => player.projection[player.projection.length - 1]?.season ?? 0)
+  );
+}
+
+function getProjectionPoint(player, season) {
+  return player.projection.find(point => point.season === season) || null;
+}
+
+function renderChart(players, weightsEnabled = false, applyAgeDecay = false, useAnalysisFeature = false) {
   const canvas = document.getElementById("comparison-chart");
   if (!canvas) return;
 
@@ -295,20 +451,47 @@ function renderChart(players, weightsEnabled = false) {
     comparisonChart.destroy();
   }
 
-  const labels = players[0].projection.map(point => `S${point.season}`);
+  const lastSeason = getLastProjectionSeason(players);
+  const labels = Array.from({ length: lastSeason + 1 }, (_, season) => `S${season}`);
 
   comparisonChart = new Chart(ctx, {
     type: "line",
     data: {
       labels,
-      datasets: players.map(player => ({
-        label: player.playerName || "Unknown Player",
-        data: player.projection.map(point => Number(point.effectiveLimit.toFixed(2))),
-        tension: 0.25,
-        pointRadius: 3,
-        pointHoverRadius: 5
-      }))
+      datasets: players.map(player => {
+        const projectionPoints = labels.map((label, season) => getProjectionPoint(player, season));
+
+        return {
+          label: player.playerName || "Unknown Player",
+          data: projectionPoints.map(point => point ? Number(point.effectiveLimit.toFixed(2)) : null),
+          projectionPoints,
+          maxAgeIndexes: projectionPoints
+            .map((point, index) => point?.maxAgeReached ? index : null)
+            .filter(index => index !== null),
+          tension: 0.25,
+          spanGaps: false,
+          pointRadius: context => {
+            const point = context.dataset.projectionPoints?.[context.dataIndex];
+            if (!point) return 0;
+            return point.maxAgeReached ? 6 : 3;
+          },
+          pointHitRadius: context => {
+            const point = context.dataset.projectionPoints?.[context.dataIndex];
+            return point ? 4 : 0;
+          },
+          pointHoverRadius: context => {
+            const point = context.dataset.projectionPoints?.[context.dataIndex];
+            if (!point) return 0;
+            return point.maxAgeReached ? 8 : 5;
+          },
+          pointStyle: context => {
+            const point = context.dataset.projectionPoints?.[context.dataIndex];
+            return point?.maxAgeReached ? "rectRot" : "circle";
+          }
+        };
+      })
     },
+    plugins: [maxAgeMarkerPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -323,17 +506,23 @@ function renderChart(players, weightsEnabled = false) {
             callbacks: {
                 afterLabel: function(context) {
                 const player = players[context.datasetIndex];
-                const point = player.projection[context.dataIndex];
+                const point = context.dataset.projectionPoints?.[context.dataIndex];
+
+                if (!point) return [];
 
                 return [
                 `Games: ${point.games}`,
                 `Age: ${getAgeAtSeason(player.playerAge, point.season)}`,
+                point.maxAgeReached ? "Max age reached: line ends here" : null,
                 `${weightsEnabled ? "Base Weighted Score" : "Base Limit"}: ${point.baseLimit.toFixed(2)}`,
                 `Heart: ${(point.heartBonus * 100).toFixed(1)}%`,
+                `Before decay: ${point.scoreBeforeDecay.toFixed(2)}`,
+                `Age decay: ${applyAgeDecay ? `${point.ageDecay.absoluteDecay} total skill (${(point.ageDecay.decayPercent * 100).toFixed(2)}%)` : "Off"}`,
+                `Analysis feature: ${applyAgeDecay && useAnalysisFeature ? "Yes" : "No"}`,
                 `Loyal: ${player.loyal ? "Yes" : "No"}`,
                 `Fragger: ${player.fragger ? "Yes" : "No"}`,
                 `Tryhard: ${player.tryhard ? "Yes" : "No"}`
-                ];
+                ].filter(Boolean);
                 }
             }
         }
@@ -348,7 +537,7 @@ function renderChart(players, weightsEnabled = false) {
         y: {
           title: {
             display: true,
-            text: weightsEnabled ? "Weighted Score + Heart Bonus" : "Limit + Heart Bonus"
+            text: `${weightsEnabled ? "Weighted Score" : "Limit"} + Heart Bonus${applyAgeDecay ? " - Age Decay" : ""}`
           }
         }
       }
@@ -356,10 +545,13 @@ function renderChart(players, weightsEnabled = false) {
   });
 }
 
-function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = false) {
+function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = false, applyAgeDecay = false, useAnalysisFeature = false) {
   const summary = document.getElementById("summary");
   if (!summary) return;
     const modeText = weightsEnabled ? "Weighted score" : "Equal weighting";
+    const ageDecayText = applyAgeDecay
+      ? `On (${useAnalysisFeature ? "analysis feature" : "normal table"})`
+      : "Off";
 
     const weightText = weightsEnabled
     ? `<p><strong>Weights:</strong> ${selectedSkills
@@ -379,8 +571,13 @@ function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = f
       <p>
         <strong>${escapeHtml(player.playerName || "Unknown Player")}:</strong>
         ${start.effectiveLimit.toFixed(2)} → ${end.effectiveLimit.toFixed(2)}
+        ${end.maxAgeReached ? " ☠" : ""}
         <br>
         ${weightsEnabled ? "Base Weighted Score" : "Base Limit"}: ${start.baseLimit.toFixed(2)}
+        <br>
+        Projection: S${start.season} to S${end.season}${end.maxAgeReached ? " (max age 40 reached)" : ""}
+        <br>
+        Age decay: ${applyAgeDecay ? `${end.ageDecay.absoluteDecay} total skill at end (${(end.ageDecay.decayPercent * 100).toFixed(2)}%)` : "Off"}
         <br>
         Abilities:
         ${[
@@ -394,7 +591,7 @@ function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = f
   }).join("");
 
   const winnerAtStart = getBestPlayerAtSeason(players, 0);
-  const winnerAtEnd = getBestPlayerAtSeason(players, players[0].projection.length - 1);
+  const winnerAtEnd = getBestPlayerAtSeason(players, getLastProjectionSeason(players));
   const leaderChanges = getLeaderChanges(players);
 
   const leaderChangeText = leaderChanges.length
@@ -408,6 +605,7 @@ function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = f
 
     <p><strong>Compared skills:</strong> ${escapeHtml(selectedSkills.join(", "))}</p>
     <p><strong>Mode:</strong> ${modeText}</p>
+    <p><strong>Age decay:</strong> ${ageDecayText}</p>
     ${weightText}
 
     ${playerRows}
@@ -496,6 +694,7 @@ function createPlayerCard(initialData = {}) {
 
     card.remove();
     updatePlayerCardTitles();
+    saveAppState();
   });
   card.querySelector(".save-player-button").addEventListener("click", () => {
   const text = card.querySelector(".player-input").value.trim();
@@ -513,6 +712,7 @@ function createPlayerCard(initialData = {}) {
     if (!savedPlayer) return;
 
     card.querySelector(".player-input").value = savedPlayer.text;
+    saveAppState();
   });
 
   card.querySelector(".delete-saved-player-button").addEventListener("click", () => {
@@ -577,6 +777,8 @@ function runComparison() {
   const selectedSkills = getSelectedSkills();
   const weightsEnabled = useSkillWeights();
   const weights = getSkillWeights();
+  const applyAgeDecay = shouldApplyAgeDecay();
+  const useAnalysisFeature = shouldUseAnalysisFeature();
   if (selectedSkills.length === 0) {
     alert("Please select at least one skill.");
     return;
@@ -597,6 +799,23 @@ function runComparison() {
 
       if (!player.skills.length) return null;
 
+      const projection = buildProjection(
+        player,
+        selectedSkills,
+        playerInput.startGames,
+        playerInput.heartMode,
+        gamesPerSeason,
+        seasonCount,
+        playerInput.loyal,
+        weights,
+        weightsEnabled,
+        abilities,
+        applyAgeDecay,
+        useAnalysisFeature
+      );
+
+      if (!projection.length) return null;
+
       return {
         ...player,
         startGames: playerInput.startGames,
@@ -604,18 +823,7 @@ function runComparison() {
         loyal: playerInput.loyal,
         fragger: playerInput.fragger,
         tryhard: playerInput.tryhard,
-        projection: buildProjection(
-          player,
-          selectedSkills,
-          playerInput.startGames,
-          playerInput.heartMode,
-          gamesPerSeason,
-          seasonCount,
-          playerInput.loyal,
-          weights,
-          weightsEnabled,
-          abilities
-        )
+        projection
       };
     })
     .filter(Boolean);
@@ -625,8 +833,8 @@ function runComparison() {
     return;
   }
 
-  renderChart(parsedPlayers, weightsEnabled);
-  renderSummary(parsedPlayers, selectedSkills, weights, weightsEnabled);
+  renderChart(parsedPlayers, weightsEnabled, applyAgeDecay, useAnalysisFeature);
+  renderSummary(parsedPlayers, selectedSkills, weights, weightsEnabled, applyAgeDecay, useAnalysisFeature);
   saveAppState();
 }
 
@@ -739,6 +947,8 @@ function saveAppState() {
     selectedSkills: getSelectedSkills(),
     weights: getSkillWeights(),
     weightsEnabled: useSkillWeights(),
+    applyAgeDecay: shouldApplyAgeDecay(),
+    useAnalysisFeature: shouldUseAnalysisFeature(),
     gamesPerSeason: document.getElementById("games-per-season")?.value || "57",
     seasonCount: document.getElementById("season-count")?.value || "15"
   };
@@ -756,7 +966,10 @@ function loadAppState() {
 
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
-  document.getElementById("add-player-button")?.addEventListener("click", () => createPlayerCard());
+  document.getElementById("add-player-button")?.addEventListener("click", () => {
+    createPlayerCard();
+    saveAppState();
+  });
 
   const savedState = loadAppState();
 
@@ -786,5 +999,18 @@ document.addEventListener("DOMContentLoaded", () => {
     if (useWeightsInput) {
       useWeightsInput.checked = !!savedState.weightsEnabled;
     }
+
+    const applyAgeDecayInput = document.getElementById("apply-age-decay");
+    if (applyAgeDecayInput) {
+      applyAgeDecayInput.checked = !!savedState.applyAgeDecay;
+    }
+
+    const useAnalysisFeatureInput = document.getElementById("use-analysis-feature");
+    if (useAnalysisFeatureInput) {
+      useAnalysisFeatureInput.checked = !!savedState.useAnalysisFeature;
+    }
   }
+
+  document.addEventListener("input", saveAppState);
+  document.addEventListener("change", saveAppState);
 });
