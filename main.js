@@ -76,9 +76,9 @@ const maxAgeMarkerPlugin = {
     const { ctx } = chart;
 
     ctx.save();
-    ctx.font = "15px Arial";
+    ctx.font = "18px Arial";
     ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
+    ctx.textBaseline = "middle";
 
     chart.data.datasets.forEach((dataset, datasetIndex) => {
       const meta = chart.getDatasetMeta(datasetIndex);
@@ -93,7 +93,7 @@ const maxAgeMarkerPlugin = {
         const { x, y } = element.getProps(["x", "y"], true);
         if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
-        ctx.fillText("40", x, y - 8);
+        ctx.fillText("\u2620\uFE0F", x, y);
       });
     });
 
@@ -473,7 +473,7 @@ function renderChart(players, weightsEnabled = false, applyAgeDecay = false, use
           pointRadius: context => {
             const point = context.dataset.projectionPoints?.[context.dataIndex];
             if (!point) return 0;
-            return point.maxAgeReached ? 6 : 3;
+            return point.maxAgeReached ? 0 : 3;
           },
           pointHitRadius: context => {
             const point = context.dataset.projectionPoints?.[context.dataIndex];
@@ -482,7 +482,7 @@ function renderChart(players, weightsEnabled = false, applyAgeDecay = false, use
           pointHoverRadius: context => {
             const point = context.dataset.projectionPoints?.[context.dataIndex];
             if (!point) return 0;
-            return point.maxAgeReached ? 8 : 5;
+            return point.maxAgeReached ? 0 : 5;
           },
           pointStyle: context => {
             const point = context.dataset.projectionPoints?.[context.dataIndex];
@@ -624,6 +624,136 @@ function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = f
       <strong>Leader changes:</strong><br>
       ${leaderChangeText}
     </p>
+  `;
+}
+
+function renderDecisionSummary(players, selectedSkills, weights = {}, weightsEnabled = false, applyAgeDecay = false, useAnalysisFeature = false) {
+  const summary = document.getElementById("summary");
+  if (!summary) return;
+
+  const modeText = weightsEnabled ? "Weighted score" : "Equal weighting";
+  const ageDecayText = applyAgeDecay
+    ? `On (${useAnalysisFeature ? "analysis feature" : "normal table"})`
+    : "Off";
+  const lastSeason = getLastProjectionSeason(players);
+  const winnerAtStart = getBestPlayerAtSeason(players, 0);
+  const winnerAtEnd = getBestPlayerAtSeason(players, lastSeason);
+  const leaderChanges = getLeaderChanges(players);
+
+  const playerStats = players.map(player => {
+    const start = player.projection[0];
+    const end = player.projection[player.projection.length - 1];
+    const averageScore = player.projection.reduce((total, point) => total + point.effectiveLimit, 0) / player.projection.length;
+
+    return {
+      player,
+      start,
+      end,
+      averageScore,
+      delta: end.effectiveLimit - start.effectiveLimit,
+      missingLimits: getMissingLimits(player, selectedSkills)
+    };
+  });
+
+  const ranking = [...playerStats].sort((a, b) => b.averageScore - a.averageScore);
+  const best = ranking[0];
+  const worst = ranking[ranking.length - 1];
+  const bestAverageScore = best.averageScore || 1;
+
+  const weightText = weightsEnabled
+    ? `<div class="summary-note"><strong>Weights:</strong> ${selectedSkills
+        .map(skill => `${escapeHtml(skill)}: ${Number(weights[skill] || 0)}`)
+        .join(", ")}</div>`
+    : "";
+
+  const leaderChangeText = leaderChanges.length
+    ? leaderChanges
+        .map(change => `S${change.season}: ${escapeHtml(change.playerName)} takes the lead with ${change.value.toFixed(2)}`)
+        .join("<br>")
+    : "No leader changes in the selected timeframe.";
+
+  const rankingRows = ranking.map((item, index) => {
+    const projectionEndText = item.end.maxAgeReached
+      ? `S${item.end.season} (age 40)`
+      : `S${item.end.season}`;
+    const averageRangeText = `S${item.start.season}-S${item.end.season}`;
+    const missingText = item.missingLimits.length
+      ? `<span class="summary-warning">Missing: ${escapeHtml(item.missingLimits.join(", "))}</span>`
+      : "";
+    const differenceFromBest = bestAverageScore > 0
+      ? ((item.averageScore - bestAverageScore) / bestAverageScore) * 100
+      : 0;
+    const differenceText = index === 0
+      ? "Best"
+      : `${differenceFromBest.toFixed(2)}%`;
+
+    return `
+      <tr>
+        <td>${index + 1}</td>
+        <td>
+          <strong>${escapeHtml(item.player.playerName || "Unknown Player")}</strong>
+          ${item.end.maxAgeReached ? '<span class="summary-tag">40</span>' : ""}
+          <span class="summary-range">${averageRangeText}</span>
+          ${missingText}
+        </td>
+        <td><strong>${item.averageScore.toFixed(2)}</strong></td>
+        <td class="${index === 0 ? "summary-positive" : "summary-negative"}">${differenceText}</td>
+        <td>${projectionEndText}</td>
+      </tr>
+    `;
+  }).join("");
+
+  summary.innerHTML = `
+    <h2>Summary</h2>
+
+    <div class="summary-decision-grid">
+      <div class="summary-decision summary-best">
+        <span>Best choice</span>
+        <strong>${escapeHtml(best.player.playerName || "Unknown Player")}</strong>
+        <small>Avg ${best.averageScore.toFixed(2)} across S${best.start.season}-S${best.end.season}</small>
+      </div>
+      <div class="summary-decision summary-worst">
+        <span>Weakest choice</span>
+        <strong>${escapeHtml(worst.player.playerName || "Unknown Player")}</strong>
+        <small>Avg ${worst.averageScore.toFixed(2)} across S${worst.start.season}-S${worst.end.season}</small>
+      </div>
+    </div>
+
+    <p class="summary-recommendation">
+      ${escapeHtml(best.player.playerName || "Unknown Player")} has the highest average score across the selected timeframe.
+      ${escapeHtml(worst.player.playerName || "Unknown Player")} has the lowest average score.
+      The percentage column compares each average to the best average.
+    </p>
+
+    <table class="summary-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Player</th>
+          <th>Avg</th>
+          <th>% vs best</th>
+          <th>Until</th>
+        </tr>
+      </thead>
+      <tbody>${rankingRows}</tbody>
+    </table>
+
+    <div class="summary-note">
+      <strong>Settings:</strong>
+      ${escapeHtml(selectedSkills.join(", "))} | ${modeText} | Age decay: ${ageDecayText} | S0 to S${lastSeason}
+      <br>
+      <strong>Decision metric:</strong> Avg is calculated across the visible projection points, including S0.
+    </div>
+    ${weightText}
+
+    <div class="summary-note">
+      <strong>Start leader:</strong> ${escapeHtml(winnerAtStart.player.playerName)} (${winnerAtStart.value.toFixed(2)})
+      <br>
+      <strong>End leader:</strong> ${escapeHtml(winnerAtEnd.player.playerName)} (${winnerAtEnd.value.toFixed(2)})
+      <br>
+      <strong>Leader changes:</strong><br>
+      ${leaderChangeText}
+    </div>
   `;
 }
 
@@ -834,7 +964,7 @@ function runComparison() {
   }
 
   renderChart(parsedPlayers, weightsEnabled, applyAgeDecay, useAnalysisFeature);
-  renderSummary(parsedPlayers, selectedSkills, weights, weightsEnabled, applyAgeDecay, useAnalysisFeature);
+  renderDecisionSummary(parsedPlayers, selectedSkills, weights, weightsEnabled, applyAgeDecay, useAnalysisFeature);
   saveAppState();
 }
 

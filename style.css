@@ -196,6 +196,113 @@ button:hover {
   font-weight: 800;
 }
 
+.summary-decision-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.summary-decision {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 10px;
+  background: #202124;
+}
+
+.summary-decision span,
+.summary-decision small {
+  display: block;
+  color: rgba(255, 248, 201, 0.82);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.summary-decision strong {
+  display: block;
+  margin: 3px 0;
+  font-size: 15px;
+}
+
+.summary-best {
+  border-left: 3px solid #2d8a4e;
+}
+
+.summary-worst {
+  border-left: 3px solid #b83737;
+}
+
+.summary-recommendation {
+  padding: 8px 10px;
+  background: rgba(255, 122, 0, 0.12);
+  border: 1px solid rgba(255, 122, 0, 0.25);
+  border-radius: 8px;
+}
+
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  color: #fff8c9;
+}
+
+.summary-table th,
+.summary-table td {
+  padding: 7px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  text-align: left;
+  vertical-align: top;
+}
+
+.summary-table th {
+  color: #ffffff;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.summary-positive {
+  color: #86e39f;
+  font-weight: 800;
+}
+
+.summary-negative {
+  color: #ff9a9a;
+  font-weight: 800;
+}
+
+.summary-tag {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #3a3a3a;
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.summary-warning {
+  display: block;
+  margin-top: 2px;
+  color: #ffcf70;
+  font-size: 10px;
+}
+
+.summary-range {
+  display: block;
+  margin-top: 2px;
+  color: rgba(255, 248, 201, 0.68);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.summary-note {
+  margin-top: 8px;
+  color: rgba(255, 248, 201, 0.9);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 @media (max-width: 960px) {
   .app {
     width: calc(100% - 24px);
