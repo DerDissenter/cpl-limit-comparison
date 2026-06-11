@@ -13,92 +13,179 @@
   <main class="app">
     <h1>CPL Limit Comparison</h1>
 
-<section class="player-toolbar">
-  <button id="add-player-button" type="button">+ Add player</button>
-</section>
+    <nav class="view-tabs" aria-label="Tool views">
+      <button class="view-tab active" type="button" data-view-target="limit-comparison-view">Limit Comparison</button>
+      <button class="view-tab" type="button" data-view-target="tryout-analyzer-view">Tryout Analyzer</button>
+    </nav>
 
-<section id="players-container" class="player-grid"></section>
+    <section id="limit-comparison-view" class="view-panel active-view">
+      <section class="player-toolbar">
+        <button id="add-player-button" type="button">+ Add player</button>
+      </section>
 
-    <section class="panel">
-      <h2>Compared skills</h2>
+      <section id="players-container" class="player-grid"></section>
 
-  <div class="skill-grid">
-    <label class="skill-weight-row">
-      <span><input type="checkbox" class="skill-checkbox" value="Aim" checked> Aim</span>
-      <input class="skill-weight" data-skill="Aim" type="number" value="1" min="0" step="0.1">
-    </label>
+      <section class="panel">
+        <h2>Compared skills</h2>
 
-    <label class="skill-weight-row">
-      <span><input type="checkbox" class="skill-checkbox" value="Handling" checked> Handling</span>
-      <input class="skill-weight" data-skill="Handling" type="number" value="1" min="0" step="0.1">
-    </label>
+        <div class="skill-grid">
+          <label class="skill-weight-row">
+            <span><input type="checkbox" class="skill-checkbox" value="Aim" checked> Aim</span>
+            <input class="skill-weight" data-skill="Aim" type="number" value="1" min="0" step="0.1">
+          </label>
 
-    <label class="skill-weight-row">
-      <span><input type="checkbox" class="skill-checkbox" value="Quickness" checked> Quickness</span>
-      <input class="skill-weight" data-skill="Quickness" type="number" value="1" min="0" step="0.1">
-    </label>
+          <label class="skill-weight-row">
+            <span><input type="checkbox" class="skill-checkbox" value="Handling" checked> Handling</span>
+            <input class="skill-weight" data-skill="Handling" type="number" value="1" min="0" step="0.1">
+          </label>
 
-    <label class="skill-weight-row">
-      <span><input type="checkbox" class="skill-checkbox" value="Determination" checked> Determination</span>
-      <input class="skill-weight" data-skill="Determination" type="number" value="1" min="0" step="0.1">
-    </label>
+          <label class="skill-weight-row">
+            <span><input type="checkbox" class="skill-checkbox" value="Quickness" checked> Quickness</span>
+            <input class="skill-weight" data-skill="Quickness" type="number" value="1" min="0" step="0.1">
+          </label>
 
-    <label class="skill-weight-row">
-      <span><input type="checkbox" class="skill-checkbox" value="Awareness" checked> Awareness</span>
-      <input class="skill-weight" data-skill="Awareness" type="number" value="1" min="0" step="0.1">
-    </label>
+          <label class="skill-weight-row">
+            <span><input type="checkbox" class="skill-checkbox" value="Determination" checked> Determination</span>
+            <input class="skill-weight" data-skill="Determination" type="number" value="1" min="0" step="0.1">
+          </label>
 
-    <label class="skill-weight-row">
-      <span><input type="checkbox" class="skill-checkbox" value="Teamplay" checked> Teamplay</span>
-      <input class="skill-weight" data-skill="Teamplay" type="number" value="1" min="0" step="0.1">
-    </label>
+          <label class="skill-weight-row">
+            <span><input type="checkbox" class="skill-checkbox" value="Awareness" checked> Awareness</span>
+            <input class="skill-weight" data-skill="Awareness" type="number" value="1" min="0" step="0.1">
+          </label>
 
-    <label class="skill-weight-row">
-      <span><input type="checkbox" class="skill-checkbox" value="Gamesense" checked> Gamesense</span>
-      <input class="skill-weight" data-skill="Gamesense" type="number" value="1" min="0" step="0.1">
-    </label>
+          <label class="skill-weight-row">
+            <span><input type="checkbox" class="skill-checkbox" value="Teamplay" checked> Teamplay</span>
+            <input class="skill-weight" data-skill="Teamplay" type="number" value="1" min="0" step="0.1">
+          </label>
 
-    <label class="skill-weight-row">
-      <span><input type="checkbox" class="skill-checkbox" value="Movement" checked> Movement</span>
-      <input class="skill-weight" data-skill="Movement" type="number" value="1" min="0" step="0.1">
-    </label>
-  </div>
+          <label class="skill-weight-row">
+            <span><input type="checkbox" class="skill-checkbox" value="Gamesense" checked> Gamesense</span>
+            <input class="skill-weight" data-skill="Gamesense" type="number" value="1" min="0" step="0.1">
+          </label>
 
-  <label class="use-weights-label">
-    <input id="use-skill-weights" type="checkbox">
-    Use weighted score
-  </label>
+          <label class="skill-weight-row">
+            <span><input type="checkbox" class="skill-checkbox" value="Movement" checked> Movement</span>
+            <input class="skill-weight" data-skill="Movement" type="number" value="1" min="0" step="0.1">
+          </label>
+        </div>
 
-  <label class="global-option-label">
-    <input id="apply-age-decay" type="checkbox">
-    Apply age decay
-  </label>
-
-  <label class="global-option-label">
-    <input id="use-analysis-feature" type="checkbox">
-    Use analysis feature
-  </label>
-
-      <div class="options-grid">
-        <label>
-          Games per season
-          <input id="games-per-season" type="number" value="57" min="1">
+        <label class="use-weights-label">
+          <input id="use-skill-weights" type="checkbox">
+          Use weighted score
         </label>
 
-        <label>
-          Seasons
-          <input id="season-count" type="number" value="15" min="1">
+        <label class="global-option-label">
+          <input id="apply-age-decay" type="checkbox">
+          Apply age decay
         </label>
 
-        <button id="compare-button">Compare</button>
-      </div>
+        <label class="global-option-label">
+          <input id="use-analysis-feature" type="checkbox">
+          Use analysis feature
+        </label>
+
+        <div class="options-grid">
+          <label>
+            Games per season
+            <input id="games-per-season" type="number" value="57" min="1">
+          </label>
+
+          <label>
+            Seasons
+            <input id="season-count" type="number" value="15" min="1">
+          </label>
+
+          <button id="compare-button">Compare</button>
+        </div>
+      </section>
+
+      <section class="panel chart-panel">
+        <canvas id="comparison-chart"></canvas>
+      </section>
+
+      <section id="summary" class="panel"></section>
     </section>
 
-    <section class="panel chart-panel">
-      <canvas id="comparison-chart"></canvas>
-    </section>
+    <section id="tryout-analyzer-view" class="view-panel" hidden>
+      <section class="panel">
+        <h2>Tryout Analyzer</h2>
 
-    <section id="summary" class="panel"></section>
+        <textarea id="tryout-input" class="tryout-input" placeholder="Paste tryout player data here"></textarea>
+
+        <div class="tryout-control-grid">
+          <label>
+            Estimation mode
+            <select id="tryout-estimation-mode">
+              <option value="average">Average distribution</option>
+              <option value="weighted">Weighted best distribution</option>
+            </select>
+          </label>
+
+          <label>
+            Current season day
+            <input id="tryout-current-season-day" type="number" value="1" min="1" max="35" step="1">
+          </label>
+
+          <label class="tryout-checkbox-label">
+            <input id="tryout-leader-icon" type="checkbox">
+            Leader icon
+          </label>
+
+          <button id="tryout-parse-button" type="button">Parse/Analyze</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Estimation weights</h2>
+
+        <div class="skill-grid">
+          <label class="skill-weight-row">
+            <span>Aim</span>
+            <input class="tryout-skill-weight" data-skill="Aim" type="number" value="1" min="0" step="0.1">
+          </label>
+
+          <label class="skill-weight-row">
+            <span>Handling</span>
+            <input class="tryout-skill-weight" data-skill="Handling" type="number" value="1" min="0" step="0.1">
+          </label>
+
+          <label class="skill-weight-row">
+            <span>Quickness</span>
+            <input class="tryout-skill-weight" data-skill="Quickness" type="number" value="1" min="0" step="0.1">
+          </label>
+
+          <label class="skill-weight-row">
+            <span>Determination</span>
+            <input class="tryout-skill-weight" data-skill="Determination" type="number" value="1" min="0" step="0.1">
+          </label>
+
+          <label class="skill-weight-row">
+            <span>Awareness</span>
+            <input class="tryout-skill-weight" data-skill="Awareness" type="number" value="1" min="0" step="0.1">
+          </label>
+
+          <label class="skill-weight-row">
+            <span>Teamplay</span>
+            <input class="tryout-skill-weight" data-skill="Teamplay" type="number" value="1" min="0" step="0.1">
+          </label>
+
+          <label class="skill-weight-row">
+            <span>Gamesense</span>
+            <input class="tryout-skill-weight" data-skill="Gamesense" type="number" value="1" min="0" step="0.1">
+          </label>
+
+          <label class="skill-weight-row">
+            <span>Movement</span>
+            <input class="tryout-skill-weight" data-skill="Movement" type="number" value="1" min="0" step="0.1">
+          </label>
+        </div>
+      </section>
+
+      <section id="tryout-results" class="panel tryout-results">
+        <p class="tryout-empty">Paste a tryout player and run Parse/Analyze.</p>
+      </section>
+    </section>
   </main>
 
   <script src="main.js"></script>

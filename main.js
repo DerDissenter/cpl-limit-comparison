@@ -13,6 +13,31 @@ const SKILL_NAMES = [
   "Movement"
 ];
 
+const TRYOUT_MAX_EXTRA_POINTS = 5;
+const TRYOUT_MIN_LIMIT = 80;
+const TRYOUT_MAX_LIMIT = 100;
+const TRYOUT_TOP4_SKILLS = ["Aim", "Handling", "Quickness", "Determination"];
+const TRYOUT_TOP4_CAP = 372;
+const TRYOUT_TOTAL_CAP = 747;
+const TRYOUT_TOP4_C_FLOOR = 365;
+const TRYOUT_TOTAL_C_FLOOR = 735;
+const TRYOUT_BIRTHDAY_MAX_DAYS = 35;
+const TRYOUT_BIRTHDAY_S_FLOOR = 34;
+const TRYOUT_BIRTHDAY_A_FLOOR = 29;
+const TRYOUT_BIRTHDAY_B_FLOOR = 14;
+const CPL_SEASON_DAYS = 35;
+const ACADEMY_ENTRY_AGE = 15;
+const MAIN_TEAM_AGE = 20;
+const ACADEMY_EXP_PER_MATCH = 57;
+const ACADEMY_LEADERSHIP_PER_MATCH = 23;
+
+const tryoutState = {
+  parsed: null,
+  manualOverrides: {},
+  extraBySkill: {},
+  saveMessage: ""
+};
+
 const MOBILE_ALIAS = {
   AIM: "Aim",
   HND: "Handling",
@@ -166,13 +191,13 @@ function parsePlayerText(text) {
         !SKILL_NAMES.includes(normalized) &&
         !/^\d+$/.test(line) &&
         !/^\/?\d+|\?$/.test(line) &&
-        !/yo/i.test(line)
+        !/\d+\s*yo/i.test(line)
       );
     }) || "Unknown Player";
 
   return {
     playerName,
-    playerAge: lines.find(line => /yo/i.test(line)) || "",
+    playerAge: lines.find(line => /\d+\s*yo/i.test(line)) || "",
     skills: parsedSkills
   };
 }
@@ -188,6 +213,112 @@ function parseAgeString(ageText) {
   return {
     age: ageMatch ? Number(ageMatch[1]) : null,
     birthdayDay: dayMatch ? Number(dayMatch[1]) : null
+  };
+}
+
+function parseIntegerInput(value, fallback = null) {
+  const number = Number.parseInt(String(value ?? "").trim(), 10);
+  return Number.isNaN(number) ? fallback : number;
+}
+
+function parseWholeNumberInput(value, fallback = null) {
+  const clean = String(value ?? "").trim();
+  return /^\d+$/.test(clean) ? Number(clean) : fallback;
+}
+
+function clampInteger(value, min, max, fallback = min) {
+  const parsed = parseIntegerInput(value, fallback);
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function parseLimitValue(value) {
+  const clean = String(value || "").replace("/", "").trim();
+
+  if (clean === "?") return null;
+  if (/^\d+$/.test(clean)) return Number(clean);
+
+  return null;
+}
+
+function parseTryoutTotal(lines) {
+  const totalIndex = lines.findIndex(line => /total skill/i.test(line));
+
+  if (totalIndex === -1) {
+    return { totalSkill: null, totalLimit: null };
+  }
+
+  const totalWindow = lines.slice(totalIndex, totalIndex + 4).join(" ");
+  const totalMatch = totalWindow.match(/total skill\s*(\d+)\s*\/\s*(\d+)/i) ||
+    totalWindow.match(/(\d+)\s*\/\s*(\d+)/);
+
+  return {
+    totalSkill: totalMatch ? Number(totalMatch[1]) : null,
+    totalLimit: totalMatch ? Number(totalMatch[2]) : null
+  };
+}
+
+function parseTryoutText(text) {
+  const lines = text
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  const ageIndex = lines.findIndex(line => /\d+\s*yo/i.test(line));
+  const ageText = ageIndex >= 0 ? lines[ageIndex] : "";
+  const { age, birthdayDay } = parseAgeString(ageText);
+  const playerName = ageIndex > 0
+    ? lines[ageIndex - 1]
+    : lines.find(line => !/^(reject|sign)$/i.test(line) && !/^\d/.test(line)) || "Unknown Player";
+  const { totalSkill, totalLimit } = parseTryoutTotal(lines);
+  const skillMap = new Map();
+
+  for (let i = 0; i < lines.length; i++) {
+    const currentLine = lines[i];
+    const normalizedLine = normalizeSkillName(currentLine);
+    const inlineMatch = currentLine.match(/^([A-Za-z]+)\s+(\d+)\s*\/\s*(\d+|\?)$/i);
+
+    if (inlineMatch) {
+      const skillName = normalizeSkillName(inlineMatch[1]);
+
+      if (SKILL_NAMES.includes(skillName)) {
+        const visibleLimit = inlineMatch[3] === "?" ? null : Number(inlineMatch[3]);
+        skillMap.set(skillName, {
+          name: skillName,
+          value: Number(inlineMatch[2]),
+          visibleLimit,
+          originalLimitText: inlineMatch[3]
+        });
+      }
+
+      continue;
+    }
+
+    if (SKILL_NAMES.includes(normalizedLine)) {
+      const value = parseIntegerInput(lines[i + 1], null);
+      const visibleLimit = parseLimitValue(lines[i + 2]);
+
+      skillMap.set(normalizedLine, {
+        name: normalizedLine,
+        value,
+        visibleLimit,
+        originalLimitText: visibleLimit === null ? "?" : String(visibleLimit)
+      });
+    }
+  }
+
+  return {
+    playerName,
+    ageText,
+    age,
+    birthdayDay,
+    totalSkill,
+    totalLimit,
+    skills: SKILL_NAMES.map(skillName => skillMap.get(skillName) || {
+      name: skillName,
+      value: null,
+      visibleLimit: null,
+      originalLimitText: "missing"
+    })
   };
 }
 
@@ -220,6 +351,39 @@ function getSkillWeights() {
 
   return weights;
 }
+
+function getTryoutSkillWeights() {
+  return getSkillWeights();
+}
+
+function setLinkedSkillWeight(skillName, value) {
+  document
+    .querySelectorAll(`.skill-weight[data-skill="${skillName}"], .tryout-skill-weight[data-skill="${skillName}"]`)
+    .forEach(input => {
+      input.value = value;
+    });
+}
+
+function syncAllSkillWeights(sourceSelector = ".skill-weight") {
+  const sourceInputs = document.querySelectorAll(sourceSelector);
+
+  sourceInputs.forEach(input => {
+    const skillName = input.dataset.skill;
+    if (!skillName) return;
+
+    setLinkedSkillWeight(skillName, input.value);
+  });
+}
+
+function setupLinkedSkillWeights() {
+  document.querySelectorAll(".skill-weight, .tryout-skill-weight").forEach(input => {
+    input.addEventListener("input", () => {
+      setLinkedSkillWeight(input.dataset.skill, input.value);
+      renderTryoutAnalyzer();
+    });
+  });
+}
+
 function parseDecimalInput(value) {
   const normalized = String(value || "")
     .trim()
@@ -828,7 +992,13 @@ function createPlayerCard(initialData = {}) {
   });
   card.querySelector(".save-player-button").addEventListener("click", () => {
   const text = card.querySelector(".player-input").value.trim();
-  savePlayerToStorage(text);
+  savePlayerToStorage(text, {
+    startGames: Number(card.querySelector(".player-games")?.value) || 0,
+    heartMode: card.querySelector(".player-heart-mode")?.value || "progressive",
+    loyal: card.querySelector(".player-loyal")?.checked || false,
+    fragger: card.querySelector(".player-fragger")?.checked || false,
+    tryhard: card.querySelector(".player-tryhard")?.checked || false
+  });
   });
 
   card.querySelector(".load-saved-player-button").addEventListener("click", () => {
@@ -842,6 +1012,22 @@ function createPlayerCard(initialData = {}) {
     if (!savedPlayer) return;
 
     card.querySelector(".player-input").value = savedPlayer.text;
+
+    if (Number.isFinite(savedPlayer.startGames)) {
+      card.querySelector(".player-games").value = String(savedPlayer.startGames);
+    }
+
+    if (savedPlayer.heartMode) {
+      card.querySelector(".player-heart-mode").value = savedPlayer.heartMode;
+    }
+
+    ["loyal", "fragger", "tryhard"].forEach(abilityName => {
+      if (typeof savedPlayer[abilityName] === "boolean") {
+        const checkbox = card.querySelector(`.player-${abilityName}`);
+        if (checkbox) checkbox.checked = savedPlayer[abilityName];
+      }
+    });
+
     saveAppState();
   });
 
@@ -989,11 +1175,975 @@ function getAbilityModifierForSkill(skillName, abilities = {}) {
 
   return modifier;
 }
+
+function getTryoutEstimationMode() {
+  return document.getElementById("tryout-estimation-mode")?.value || "average";
+}
+
+function getTryoutCurrentSeasonDay() {
+  const input = document.getElementById("tryout-current-season-day");
+  const rawText = input?.value ?? "1";
+  const rawValue = parseIntegerInput(rawText, 1);
+  const value = Math.min(CPL_SEASON_DAYS, Math.max(1, rawValue));
+
+  if (input && rawText !== "" && rawValue !== value) {
+    input.value = String(value);
+  }
+
+  return value;
+}
+
+function isTryoutLeaderIconChecked() {
+  return document.getElementById("tryout-leader-icon")?.checked || false;
+}
+
+function getDistributionWeight(skillName, weights = {}) {
+  const weight = Number(weights[skillName]);
+  return weight > 0 ? weight : 1;
+}
+
+function getSkillOrder(skillName) {
+  const index = SKILL_NAMES.indexOf(skillName);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function distributeAverageLimitPool(skillNames, remainingLimitPool, weights = {}) {
+  const allocations = {};
+
+  if (!skillNames.length) return allocations;
+
+  const minTotal = skillNames.length * TRYOUT_MIN_LIMIT;
+  const maxTotal = skillNames.length * TRYOUT_MAX_LIMIT;
+
+  if (remainingLimitPool < minTotal || remainingLimitPool > maxTotal) {
+    return allocations;
+  }
+
+  const extraPool = remainingLimitPool - minTotal;
+  const maxExtraPerSkill = TRYOUT_MAX_LIMIT - TRYOUT_MIN_LIMIT;
+  const baseExtra = Math.floor(extraPool / skillNames.length);
+  const remainder = extraPool - baseExtra * skillNames.length;
+  const remainderOrder = [...skillNames].sort((a, b) => {
+    const weightDifference = getDistributionWeight(b, weights) - getDistributionWeight(a, weights);
+    return weightDifference || getSkillOrder(a) - getSkillOrder(b);
+  });
+
+  skillNames.forEach(skillName => {
+    allocations[skillName] = TRYOUT_MIN_LIMIT + Math.min(maxExtraPerSkill, baseExtra);
+  });
+
+  for (let i = 0; i < remainder; i++) {
+    allocations[remainderOrder[i]] += 1;
+  }
+
+  return allocations;
+}
+
+function distributeWeightedExtraPool(skillNames, extraPool, weights = {}) {
+  const allocations = {};
+  const maxExtraPerSkill = TRYOUT_MAX_LIMIT - TRYOUT_MIN_LIMIT;
+
+  skillNames.forEach(skillName => {
+    allocations[skillName] = 0;
+  });
+
+  for (let point = 0; point < extraPool; point++) {
+    const bestSkill = skillNames
+      .filter(skillName => allocations[skillName] < maxExtraPerSkill)
+      .sort((a, b) => {
+        const aScore = getDistributionWeight(a, weights) / (allocations[a] + 1);
+        const bScore = getDistributionWeight(b, weights) / (allocations[b] + 1);
+        const scoreDifference = bScore - aScore;
+        if (scoreDifference) return scoreDifference;
+
+        const weightDifference = getDistributionWeight(b, weights) - getDistributionWeight(a, weights);
+        return weightDifference || getSkillOrder(a) - getSkillOrder(b);
+      })[0];
+
+    if (!bestSkill) break;
+
+    allocations[bestSkill] += 1;
+  }
+
+  return allocations;
+}
+
+function distributeWeightedLimitPool(skillNames, remainingLimitPool, weights = {}) {
+  const allocations = {};
+
+  if (!skillNames.length) return allocations;
+
+  const minTotal = skillNames.length * TRYOUT_MIN_LIMIT;
+  const maxTotal = skillNames.length * TRYOUT_MAX_LIMIT;
+
+  if (remainingLimitPool < minTotal || remainingLimitPool > maxTotal) {
+    return allocations;
+  }
+
+  const extraPool = remainingLimitPool - minTotal;
+  const weightedExtras = distributeWeightedExtraPool(skillNames, extraPool, weights);
+
+  // Weighted mode starts every unresolved hidden skill at the CPL tryout
+  // minimum, then allocates integer points one by one to the highest weighted
+  // skill that has the largest remaining weighted need. Limits are capped at 100.
+  skillNames.forEach(skillName => {
+    allocations[skillName] = TRYOUT_MIN_LIMIT + (weightedExtras[skillName] || 0);
+  });
+
+  return allocations;
+}
+
+function validateParsedTryout(parsed) {
+  const warnings = [];
+
+  if (!parsed.playerName || parsed.playerName === "Unknown Player") {
+    warnings.push("Player name could not be parsed.");
+  }
+
+  if (parsed.age === null) {
+    warnings.push("Age text could not be parsed.");
+  }
+
+  if (parsed.birthdayDay === null) {
+    warnings.push("Birthday day could not be parsed from the age text.");
+  }
+
+  if (!Number.isFinite(parsed.totalSkill)) {
+    warnings.push("Total current skill could not be parsed.");
+  }
+
+  if (!Number.isFinite(parsed.totalLimit)) {
+    warnings.push("Total limit could not be parsed.");
+  }
+
+  const missingCurrentSkills = parsed.skills
+    .filter(skill => !Number.isFinite(skill.value))
+    .map(skill => skill.name);
+
+  if (missingCurrentSkills.length) {
+    warnings.push(`Current value missing for: ${missingCurrentSkills.join(", ")}.`);
+  }
+
+  return warnings;
+}
+
+function getTryoutTop4BaseSum(rows) {
+  return rows
+    .filter(row => TRYOUT_TOP4_SKILLS.includes(row.name))
+    .reduce((total, row) => total + (Number.isFinite(row.baseLimit) ? row.baseLimit : 0), 0);
+}
+
+function enforceTryoutTop4Cap(baseRows, weights = {}) {
+  const rows = baseRows.map(row => ({ ...row }));
+  const warnings = [];
+  let top4Sum = getTryoutTop4BaseSum(rows);
+
+  if (top4Sum <= TRYOUT_TOP4_CAP) {
+    return { rows, warnings };
+  }
+
+  let excess = top4Sum - TRYOUT_TOP4_CAP;
+  const reducibleTop4 = rows
+    .filter(row => (
+      TRYOUT_TOP4_SKILLS.includes(row.name) &&
+      row.source === "estimated" &&
+      Number.isFinite(row.baseLimit) &&
+      row.baseLimit > TRYOUT_MIN_LIMIT
+    ))
+    .sort((a, b) => {
+      const weightDifference = getDistributionWeight(a.name, weights) - getDistributionWeight(b.name, weights);
+      return weightDifference || getSkillOrder(a.name) - getSkillOrder(b.name);
+    });
+  const receivers = rows
+    .filter(row => (
+      !TRYOUT_TOP4_SKILLS.includes(row.name) &&
+      row.source === "estimated" &&
+      Number.isFinite(row.baseLimit) &&
+      row.baseLimit < TRYOUT_MAX_LIMIT
+    ))
+    .sort((a, b) => {
+      const weightDifference = getDistributionWeight(b.name, weights) - getDistributionWeight(a.name, weights);
+      return weightDifference || getSkillOrder(a.name) - getSkillOrder(b.name);
+    });
+  let moved = 0;
+
+  // The Top4 tryout cap is enforced only on estimated values. Known visible
+  // limits and manual overrides stay fixed; if they alone exceed the cap, the
+  // user gets a warning instead of silent mutation.
+  while (excess > 0) {
+    const reducer = reducibleTop4.find(row => row.baseLimit > TRYOUT_MIN_LIMIT);
+    const receiver = receivers.find(row => row.baseLimit < TRYOUT_MAX_LIMIT);
+
+    if (!reducer || !receiver) break;
+
+    reducer.baseLimit -= 1;
+    receiver.baseLimit += 1;
+    excess -= 1;
+    moved += 1;
+  }
+
+  top4Sum = getTryoutTop4BaseSum(rows);
+
+  if (top4Sum > TRYOUT_TOP4_CAP) {
+    warnings.push(`Top4 base limit sum is ${top4Sum}, expected max ${TRYOUT_TOP4_CAP}.`);
+  } else if (moved > 0) {
+    warnings.push(`Top4 cap applied: moved ${moved} estimated point(s) from Top4 to lower primary skills.`);
+  }
+
+  return { rows, warnings };
+}
+
+function getTryoutTier(value, maxValue, cFloor) {
+  if (!Number.isFinite(value)) {
+    return { tier: "C", label: "C-TIER", value, score: -Infinity };
+  }
+
+  const span = maxValue - cFloor;
+  const aWidth = Math.max(1, Math.ceil(span * 0.25));
+  const aFloor = maxValue - aWidth;
+  let tier = "C";
+
+  if (value >= maxValue) {
+    tier = "S";
+  } else if (value >= aFloor) {
+    tier = "A";
+  } else if (value >= cFloor) {
+    tier = "B";
+  }
+
+  return {
+    tier,
+    label: `${tier}-TIER`,
+    value,
+    maxValue,
+    cFloor,
+    score: span > 0 ? (value - cFloor) / span : 0
+  };
+}
+
+function getDaysUntilNextBirthday(currentSeasonDay, birthdayDay) {
+  const currentDay = clampInteger(currentSeasonDay, 1, CPL_SEASON_DAYS, 1);
+  const birthday = clampInteger(birthdayDay, 1, CPL_SEASON_DAYS, currentDay);
+  const rawDelta = (birthday - currentDay + CPL_SEASON_DAYS) % CPL_SEASON_DAYS;
+
+  return rawDelta === 0 ? CPL_SEASON_DAYS : rawDelta;
+}
+
+function getTryoutBirthdayTier(currentSeasonDay, birthdayDay) {
+  const daysUntilBirthday = getDaysUntilNextBirthday(currentSeasonDay, birthdayDay);
+  let tier = "C";
+
+  if (daysUntilBirthday >= TRYOUT_BIRTHDAY_S_FLOOR) {
+    tier = "S";
+  } else if (daysUntilBirthday >= TRYOUT_BIRTHDAY_A_FLOOR) {
+    tier = "A";
+  } else if (daysUntilBirthday >= TRYOUT_BIRTHDAY_B_FLOOR) {
+    tier = "B";
+  }
+
+  return {
+    tier,
+    label: `${tier}-TIER`,
+    value: daysUntilBirthday,
+    maxValue: TRYOUT_BIRTHDAY_MAX_DAYS,
+    cFloor: TRYOUT_BIRTHDAY_B_FLOOR,
+    score: tier === "S"
+      ? 1
+      : (daysUntilBirthday - TRYOUT_BIRTHDAY_B_FLOOR) /
+        (TRYOUT_BIRTHDAY_S_FLOOR - TRYOUT_BIRTHDAY_B_FLOOR)
+  };
+}
+
+function getTryoutCombinedTier(...tiers) {
+  const tierList = Array.isArray(tiers[0]) ? tiers[0] : tiers;
+  const score = tierList.reduce((total, tier) => total + tier.score, 0) / tierList.length;
+  let tier = "C";
+
+  if (score >= 1) {
+    tier = "S";
+  } else if (score >= 0.75) {
+    tier = "A";
+  } else if (score >= 0) {
+    tier = "B";
+  }
+
+  return {
+    tier,
+    label: `${tier}-TIER`,
+    score
+  };
+}
+
+function getTryoutTierSummary(rows, baseTotal, currentSeasonDay, birthdayDay) {
+  const top4Sum = getTryoutTop4BaseSum(rows);
+  const totalTier = getTryoutTier(baseTotal, TRYOUT_TOTAL_CAP, TRYOUT_TOTAL_C_FLOOR);
+  const top4Tier = getTryoutTier(top4Sum, TRYOUT_TOP4_CAP, TRYOUT_TOP4_C_FLOOR);
+  const birthdayTier = getTryoutBirthdayTier(currentSeasonDay, birthdayDay);
+  const combinedTier = getTryoutCombinedTier(totalTier, top4Tier, birthdayTier);
+
+  return {
+    top4Sum,
+    totalTier,
+    top4Tier,
+    birthdayTier,
+    combinedTier
+  };
+}
+
+function normalizeTryoutExtraBySkill(rows, extraBySkill = {}) {
+  const normalized = {};
+  const warnings = [];
+  const capacityBySkill = {};
+  let used = 0;
+  let capped = false;
+
+  SKILL_NAMES.forEach(skillName => {
+    const row = rows.find(item => item.name === skillName);
+    const baseLimit = row?.baseLimit;
+    const requested = clampInteger(extraBySkill[skillName], 0, TRYOUT_MAX_EXTRA_POINTS, 0);
+    const skillCapacity = Number.isFinite(baseLimit)
+      ? Math.max(0, TRYOUT_MAX_LIMIT - baseLimit)
+      : 0;
+    const totalCapacity = TRYOUT_MAX_EXTRA_POINTS - used;
+    const extra = Math.min(requested, skillCapacity, totalCapacity);
+
+    if (requested > extra) {
+      capped = true;
+    }
+
+    normalized[skillName] = extra;
+    capacityBySkill[skillName] = skillCapacity;
+    used += extra;
+  });
+
+  if (capped) {
+    warnings.push(`Extra limit points are capped at ${TRYOUT_MAX_EXTRA_POINTS} total and ${TRYOUT_MAX_LIMIT} per skill.`);
+  }
+
+  return {
+    extraBySkill: normalized,
+    capacityBySkill,
+    extraUsed: used,
+    warnings
+  };
+}
+
+function getTryoutExtraUsed(extraBySkill = tryoutState.extraBySkill) {
+  return SKILL_NAMES.reduce((total, skillName) => {
+    return total + clampInteger(extraBySkill[skillName], 0, TRYOUT_MAX_EXTRA_POINTS, 0);
+  }, 0);
+}
+
+function calculateTryoutFinalLimits(
+  parsed,
+  mode,
+  weights,
+  manualOverrides,
+  extraBySkill = {},
+  currentSeasonDay = 1
+) {
+  const warnings = [];
+  const hiddenSkills = parsed.skills.filter(skill => skill.visibleLimit === null);
+  const manualLimits = {};
+
+  hiddenSkills.forEach(skill => {
+    if (!Object.prototype.hasOwnProperty.call(manualOverrides, skill.name)) return;
+
+    const manualValue = parseWholeNumberInput(manualOverrides[skill.name], null);
+
+    if (manualValue === null) {
+      warnings.push(`${skill.name} manual limit must be a whole number.`);
+      return;
+    }
+
+    if (manualValue < TRYOUT_MIN_LIMIT || manualValue > TRYOUT_MAX_LIMIT) {
+      warnings.push(`${skill.name} manual limit must be between ${TRYOUT_MIN_LIMIT} and ${TRYOUT_MAX_LIMIT}.`);
+      return;
+    }
+
+    manualLimits[skill.name] = manualValue;
+  });
+
+  const knownVisibleSum = parsed.skills.reduce((total, skill) => {
+    return total + (Number.isFinite(skill.visibleLimit) ? skill.visibleLimit : 0);
+  }, 0);
+  const manualSum = Object.values(manualLimits).reduce((total, value) => total + value, 0);
+  const baseTargetTotal = Number.isFinite(parsed.totalLimit) ? parsed.totalLimit : 0;
+  const unresolvedHiddenSkills = hiddenSkills
+    .filter(skill => !Object.prototype.hasOwnProperty.call(manualLimits, skill.name))
+    .map(skill => skill.name);
+  const remainingLimitPool = baseTargetTotal - knownVisibleSum - manualSum;
+  const unresolvedMinPool = unresolvedHiddenSkills.length * TRYOUT_MIN_LIMIT;
+  const unresolvedMaxPool = unresolvedHiddenSkills.length * TRYOUT_MAX_LIMIT;
+
+  parsed.skills.forEach(skill => {
+    if (
+      Number.isFinite(skill.visibleLimit) &&
+      (skill.visibleLimit < TRYOUT_MIN_LIMIT || skill.visibleLimit > TRYOUT_MAX_LIMIT)
+    ) {
+      warnings.push(`${skill.name} visible limit must be between ${TRYOUT_MIN_LIMIT} and ${TRYOUT_MAX_LIMIT}.`);
+    }
+  });
+
+  if (remainingLimitPool < 0) {
+    warnings.push("Total hidden pool is negative after known visible limits and manual hidden overrides.");
+  }
+
+  if (baseTargetTotal > TRYOUT_TOTAL_CAP) {
+    warnings.push(`Total base limit is ${baseTargetTotal}, expected max ${TRYOUT_TOTAL_CAP}.`);
+  }
+
+  if (
+    unresolvedHiddenSkills.length &&
+    (remainingLimitPool < unresolvedMinPool || remainingLimitPool > unresolvedMaxPool)
+  ) {
+    warnings.push(
+      `Remaining hidden pool ${remainingLimitPool} cannot fit ${unresolvedHiddenSkills.length} hidden skill(s) between ${TRYOUT_MIN_LIMIT} and ${TRYOUT_MAX_LIMIT}.`
+    );
+  }
+
+  if (remainingLimitPool > 0 && unresolvedHiddenSkills.length === 0) {
+    warnings.push("There are remaining limit points but no unresolved hidden skills to receive them.");
+  }
+
+  const canAllocateHidden = remainingLimitPool >= unresolvedMinPool &&
+    remainingLimitPool <= unresolvedMaxPool;
+  const allocations = canAllocateHidden
+    ? mode === "weighted"
+      ? distributeWeightedLimitPool(unresolvedHiddenSkills, remainingLimitPool, weights)
+      : distributeAverageLimitPool(unresolvedHiddenSkills, remainingLimitPool, weights)
+    : {};
+
+  let baseRows = parsed.skills.map(skill => {
+    if (Number.isFinite(skill.visibleLimit)) {
+      return {
+        ...skill,
+        baseLimit: skill.visibleLimit,
+        source: "known"
+      };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(manualLimits, skill.name)) {
+      return {
+        ...skill,
+        baseLimit: manualLimits[skill.name],
+        source: "manual"
+      };
+    }
+
+    return {
+      ...skill,
+      baseLimit: allocations[skill.name] ?? null,
+      source: "estimated"
+    };
+  });
+  const top4Cap = enforceTryoutTop4Cap(baseRows, weights);
+  baseRows = top4Cap.rows;
+  warnings.push(...top4Cap.warnings);
+
+  const extra = normalizeTryoutExtraBySkill(baseRows, extraBySkill);
+  const rows = baseRows.map(row => {
+    const extraLimit = extra.extraBySkill[row.name] || 0;
+    const finalLimit = Number.isFinite(row.baseLimit)
+      ? row.baseLimit + extraLimit
+      : null;
+
+    return {
+      ...row,
+      extraLimit,
+      extraCapacity: extra.capacityBySkill[row.name] || 0,
+      finalLimit
+    };
+  });
+  warnings.push(...extra.warnings);
+
+  const finalSum = rows.reduce((total, row) => {
+    return total + (Number.isFinite(row.finalLimit) ? row.finalLimit : 0);
+  }, 0);
+  const baseSum = rows.reduce((total, row) => {
+    return total + (Number.isFinite(row.baseLimit) ? row.baseLimit : 0);
+  }, 0);
+  const targetTotal = baseTargetTotal + extra.extraUsed;
+  const top4BaseSum = getTryoutTop4BaseSum(rows);
+  const tierSummary = getTryoutTierSummary(rows, baseSum, currentSeasonDay, parsed.birthdayDay);
+
+  if (Number.isFinite(parsed.totalLimit) && baseSum !== baseTargetTotal) {
+    warnings.push(`Base skill limit sum is ${baseSum}, expected ${baseTargetTotal}.`);
+  }
+
+  if (Number.isFinite(parsed.totalLimit) && finalSum !== targetTotal) {
+    warnings.push(`Final skill limit sum is ${finalSum}, expected ${targetTotal}.`);
+  }
+
+  return {
+    rows,
+    knownVisibleSum,
+    manualSum,
+    baseTargetTotal,
+    targetTotal,
+    remainingLimitPool,
+    extraBySkill: extra.extraBySkill,
+    extraUsed: extra.extraUsed,
+    finalSum,
+    baseSum,
+    warnings,
+    isValid: Number.isFinite(parsed.totalLimit) &&
+      remainingLimitPool >= unresolvedMinPool &&
+      remainingLimitPool <= unresolvedMaxPool &&
+      rows.every(row => Number.isFinite(row.finalLimit)) &&
+      rows.every(row => row.finalLimit >= TRYOUT_MIN_LIMIT && row.finalLimit <= TRYOUT_MAX_LIMIT) &&
+      baseTargetTotal <= TRYOUT_TOTAL_CAP &&
+      top4BaseSum <= TRYOUT_TOP4_CAP &&
+      baseSum === baseTargetTotal &&
+      finalSum === targetTotal,
+    top4BaseSum,
+    tierSummary
+  };
+}
+
+function calculateAcademyMatches(parsed, currentSeasonDay) {
+  const currentAge = Number.isFinite(parsed.age) ? parsed.age : ACADEMY_ENTRY_AGE;
+  const birthdayDay = clampInteger(parsed.birthdayDay, 1, CPL_SEASON_DAYS, currentSeasonDay);
+
+  if (currentAge >= MAIN_TEAM_AGE) return 0;
+
+  // CPL aging is approximated here without scraping: one academy match is
+  // counted per season day until the birthday that turns the player 20.
+  const daysUntilNextBirthday = currentSeasonDay < birthdayDay
+    ? birthdayDay - currentSeasonDay
+    : CPL_SEASON_DAYS - currentSeasonDay + birthdayDay;
+  const fullSeasonsAfterNextBirthday = Math.max(0, MAIN_TEAM_AGE - currentAge - 1);
+
+  return Math.max(0, daysUntilNextBirthday + fullSeasonsAfterNextBirthday * CPL_SEASON_DAYS);
+}
+
+function calculateAcademyProgress(parsed, currentSeasonDay, leaderIcon = false) {
+  const matches = calculateAcademyMatches(parsed, currentSeasonDay);
+  const totalExp = matches * ACADEMY_EXP_PER_MATCH;
+  const gainedLevels = Math.floor(totalExp / 500);
+  const expLevel = Math.min(20, 1 + gainedLevels);
+  const expProgress = expLevel >= 20 ? 500 : totalExp % 500;
+  const leadershipPointsPerMatch = ACADEMY_LEADERSHIP_PER_MATCH * (leaderIcon ? 1.25 : 1);
+  const totalLeadershipPoints = matches * leadershipPointsPerMatch;
+  const leadershipLevel = Math.floor(totalLeadershipPoints / 500);
+  const leadershipProgress = totalLeadershipPoints % 500;
+
+  return {
+    matches,
+    totalExp,
+    expLevel,
+    expProgress,
+    leadershipPointsPerMatch,
+    totalLeadershipPoints,
+    leadershipLevel,
+    leadershipProgress
+  };
+}
+
+function buildSavedTryoutPlayerText(parsed, rows) {
+  const birthdayDay = parsed.birthdayDay ?? 1;
+  const lines = [
+    parsed.playerName || "Unknown Player",
+    `20yo (day ${birthdayDay})`,
+    ""
+  ];
+
+  rows.forEach(row => {
+    lines.push(row.name);
+    lines.push(String(row.value));
+    lines.push(`/ ${row.finalLimit}`);
+  });
+
+  return lines.join("\n");
+}
+
+function renderTryoutAnalyzer() {
+  const results = document.getElementById("tryout-results");
+  if (!results) return;
+
+  if (!tryoutState.parsed) {
+    results.innerHTML = '<p class="tryout-empty">Paste a tryout player and run Parse/Analyze.</p>';
+    return;
+  }
+
+  const parsed = tryoutState.parsed;
+  const mode = getTryoutEstimationMode();
+  const weights = getTryoutSkillWeights();
+  const currentSeasonDay = getTryoutCurrentSeasonDay();
+  const leaderIcon = isTryoutLeaderIconChecked();
+  const calculation = calculateTryoutFinalLimits(
+    parsed,
+    mode,
+    weights,
+    tryoutState.manualOverrides,
+    tryoutState.extraBySkill,
+    currentSeasonDay
+  );
+  tryoutState.extraBySkill = { ...calculation.extraBySkill };
+  const academy = calculateAcademyProgress(parsed, currentSeasonDay, leaderIcon);
+  const validationWarnings = validateParsedTryout(parsed);
+  const warnings = [
+    ...validationWarnings,
+    ...calculation.warnings
+  ];
+  const currentValuesValid = parsed.skills.every(skill => Number.isFinite(skill.value));
+  const canSave = calculation.isValid && currentValuesValid && validationWarnings.length === 0;
+  const modeText = mode === "weighted" ? "Weighted best distribution" : "Average distribution";
+  const tierSummary = calculation.tierSummary;
+  const tierCards = [
+    {
+      label: "Combined",
+      tier: tierSummary.combinedTier,
+      detail: "Total + Top4 + Birthday"
+    },
+    {
+      label: "Total",
+      tier: tierSummary.totalTier,
+      detail: `${calculation.baseSum}/${TRYOUT_TOTAL_CAP}`
+    },
+    {
+      label: "Top4",
+      tier: tierSummary.top4Tier,
+      detail: `${tierSummary.top4Sum}/${TRYOUT_TOP4_CAP}`
+    },
+    {
+      label: "Birthday",
+      tier: tierSummary.birthdayTier,
+      detail: `${tierSummary.birthdayTier.value}/${TRYOUT_BIRTHDAY_MAX_DAYS} days`
+    }
+  ].map(item => `
+    <div class="tryout-tier-card tier-${escapeHtml(item.tier.tier.toLowerCase())}">
+      <span>${escapeHtml(item.label)}</span>
+      <strong>${escapeHtml(item.tier.label)}</strong>
+      <small>${escapeHtml(item.detail)}</small>
+    </div>
+  `).join("");
+
+  const skillRows = calculation.rows.map(row => {
+    const isHidden = row.visibleLimit === null;
+    const manualValue = tryoutState.manualOverrides[row.name] ?? "";
+    const inputValue = isHidden ? manualValue : "";
+    const value = Number.isFinite(row.value) ? row.value : 0;
+    const limit = Number.isFinite(row.finalLimit) ? row.finalLimit : 0;
+    const currentPercent = Math.min(100, Math.max(0, value));
+    const limitPercent = Math.min(100, Math.max(currentPercent, limit));
+    const limitText = Number.isFinite(row.finalLimit) ? row.finalLimit : "?";
+    const baseLimitText = Number.isFinite(row.baseLimit) ? row.baseLimit : "";
+    const displayedLimitClass = row.visibleLimit === null ? row.source : "known";
+    const extraPlusDisabled =
+      calculation.extraUsed >= TRYOUT_MAX_EXTRA_POINTS ||
+      !Number.isFinite(row.baseLimit) ||
+      row.extraLimit >= row.extraCapacity;
+    const extraMinusDisabled = row.extraLimit <= 0;
+
+    return `
+      <div class="tryout-skill-row">
+        <div class="tryout-skill-name">${escapeHtml(row.name)}</div>
+        <div class="tryout-skill-track" title="${escapeHtml(row.name)}: ${value}/${limit || "?"}">
+          <span class="tryout-skill-limit" style="width: ${limitPercent}%"></span>
+          <span class="tryout-skill-current" style="width: ${currentPercent}%"></span>
+        </div>
+        <div class="tryout-skill-values">
+          <strong>${Number.isFinite(row.value) ? row.value : "?"}</strong><span class="tryout-displayed-limit ${escapeHtml(displayedLimitClass)}">/${escapeHtml(limitText)}</span>
+        </div>
+        <div class="tryout-skill-edit">
+          ${isHidden
+            ? `
+              <input
+                class="tryout-final-limit-input"
+                data-skill="${escapeHtml(row.name)}"
+                type="number"
+                min="${TRYOUT_MIN_LIMIT}"
+                max="${TRYOUT_MAX_LIMIT}"
+                step="1"
+                aria-label="${escapeHtml(row.name)} manual base limit"
+                placeholder="${escapeHtml(baseLimitText)}"
+                value="${escapeHtml(inputValue)}"
+              >
+            `
+            : '<span class="tryout-fixed-limit">visible</span>'
+          }
+          <span class="tryout-source ${escapeHtml(row.source)}">${escapeHtml(row.source)}</span>
+          <div class="tryout-extra-control" aria-label="${escapeHtml(row.name)} extra limit points">
+            <button class="tryout-extra-button" type="button" data-skill="${escapeHtml(row.name)}" data-delta="-1" ${extraMinusDisabled ? "disabled" : ""}>-</button>
+            <span class="tryout-extra-pill ${row.extraLimit > 0 ? "active" : ""}">+${row.extraLimit}</span>
+            <button class="tryout-extra-button" type="button" data-skill="${escapeHtml(row.name)}" data-delta="1" ${extraPlusDisabled ? "disabled" : ""}>+</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const expRemaining = academy.expLevel >= 20
+    ? 0
+    : 500 - academy.expProgress;
+  const expNextLevel = Math.min(20, academy.expLevel + 1);
+  const expGaugeDegrees = academy.expLevel >= 20
+    ? 180
+    : Math.round((academy.expProgress / 500) * 180);
+  const leadershipProgress = academy.leadershipProgress;
+  const leadershipRemaining = leadershipProgress === 0
+    ? 500
+    : 500 - leadershipProgress;
+  const leadershipGaugeDegrees = Math.round((leadershipProgress / 500) * 180);
+
+  const warningsHtml = warnings.length
+    ? `
+      <div class="tryout-warning-list">
+        <strong>Warnings</strong>
+        <ul>
+          ${warnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join("")}
+        </ul>
+      </div>
+    `
+    : '<p class="tryout-ok">Final skill limits match the expected total.</p>';
+
+  const saveStatusHtml = tryoutState.saveMessage
+    ? `<p class="tryout-save-status">${escapeHtml(tryoutState.saveMessage)}</p>`
+    : "";
+
+  results.innerHTML = `
+    <div class="tryout-player-strip">
+      <div>
+        <span>Tryout player</span>
+        <strong>${escapeHtml(parsed.playerName)}</strong>
+      </div>
+      <div>
+        <span>Age</span>
+        <strong>${escapeHtml(parsed.ageText || "?")}</strong>
+      </div>
+    </div>
+
+    <div class="tryout-skill-card">
+      <div class="tryout-skill-card-header">
+        <h3>Primary skills</h3>
+        <div class="tryout-total-pill">
+          <span>Total skill</span>
+          <strong>${parsed.totalSkill ?? "?"}</strong><em>/${calculation.targetTotal}</em>
+        </div>
+      </div>
+      <div class="tryout-skill-bars">${skillRows}</div>
+    </div>
+
+    <div class="tryout-tier-panel">
+      ${tierCards}
+    </div>
+
+    ${warningsHtml}
+
+    <div class="tryout-visual-stats">
+      <div class="tryout-gauge-card">
+        <h3>Experience</h3>
+        <div class="tryout-gauge experience" style="--gauge-deg: ${expGaugeDegrees}deg">
+          <strong>${academy.expLevel}</strong>
+        </div>
+        <span>${academy.expLevel >= 20 ? "MAX LVL" : `${expRemaining} TO LVL ${expNextLevel}`}</span>
+      </div>
+      <div class="tryout-gauge-card">
+        <h3>Leadership</h3>
+        <div class="tryout-gauge leadership" style="--gauge-deg: ${leadershipGaugeDegrees}deg">
+          <strong>${academy.leadershipLevel}</strong>
+        </div>
+        <span>${leadershipRemaining.toFixed(1)} TO LVL ${academy.leadershipLevel + 1}</span>
+      </div>
+    </div>
+
+    <div class="tryout-calculation-grid">
+      <div class="tryout-calc-item"><span>Mode</span><strong>${escapeHtml(modeText)}</strong></div>
+      <div class="tryout-calc-item"><span>Extra points used</span><strong>${calculation.extraUsed} / ${TRYOUT_MAX_EXTRA_POINTS}</strong></div>
+      <div class="tryout-calc-item"><span>Final sum</span><strong>${calculation.finalSum} / ${calculation.targetTotal}</strong></div>
+      <div class="tryout-calc-item"><span>Remaining hidden pool</span><strong>${calculation.remainingLimitPool}</strong></div>
+      <div class="tryout-calc-item"><span>Academy matches</span><strong>${academy.matches}</strong></div>
+      <div class="tryout-calc-item"><span>Total EXP</span><strong>${academy.totalExp}</strong></div>
+      <div class="tryout-calc-item"><span>Leadership points</span><strong>${academy.totalLeadershipPoints.toFixed(1)}</strong></div>
+      <div class="tryout-calc-item"><span>Leadership per match</span><strong>${academy.leadershipPointsPerMatch.toFixed(2)}</strong></div>
+    </div>
+
+    <p class="tryout-note">
+      Manual fields override hidden base limits (${TRYOUT_MIN_LIMIT}-${TRYOUT_MAX_LIMIT}); +/- tokens distribute the ${TRYOUT_MAX_EXTRA_POINTS} extra limit points.
+      <br>
+      Birthday tier uses days until next birthday: birthday today or yesterday is best, birthday tomorrow is worst.
+      <br>
+      Leadership uses ${academy.leadershipPointsPerMatch.toFixed(2)} points per academy match.
+      The academy match count is a deterministic season-day approximation.
+    </p>
+
+    <div class="tryout-actions">
+      <button id="tryout-save-player" type="button" ${canSave ? "" : "disabled"}>Save player for comparison</button>
+      ${saveStatusHtml}
+    </div>
+  `;
+}
+
+function saveTryoutPlayerForComparison() {
+  if (!tryoutState.parsed) return;
+
+  const parsed = tryoutState.parsed;
+  const calculation = calculateTryoutFinalLimits(
+    parsed,
+    getTryoutEstimationMode(),
+    getTryoutSkillWeights(),
+    tryoutState.manualOverrides,
+    tryoutState.extraBySkill,
+    getTryoutCurrentSeasonDay()
+  );
+  tryoutState.extraBySkill = { ...calculation.extraBySkill };
+  const validationWarnings = validateParsedTryout(parsed);
+
+  if (!calculation.isValid || validationWarnings.length) {
+    tryoutState.saveMessage = "Fix the warnings before saving this tryout player.";
+    renderTryoutAnalyzer();
+    return;
+  }
+
+  const academy = calculateAcademyProgress(
+    parsed,
+    getTryoutCurrentSeasonDay(),
+    isTryoutLeaderIconChecked()
+  );
+  const playerText = buildSavedTryoutPlayerText(parsed, calculation.rows);
+  const savedPlayer = savePlayerToStorage(playerText, {
+    startGames: academy.matches,
+    heartMode: "progressive",
+    source: "tryoutAnalyzer"
+  });
+
+  if (savedPlayer) {
+    tryoutState.saveMessage = `Saved ${savedPlayer.name} with ${academy.matches} starting matches.`;
+  }
+
+  renderTryoutAnalyzer();
+}
+
+function adjustTryoutExtraLimit(skillName, delta) {
+  if (!tryoutState.parsed || !SKILL_NAMES.includes(skillName)) return;
+
+  const current = clampInteger(tryoutState.extraBySkill[skillName], 0, TRYOUT_MAX_EXTRA_POINTS, 0);
+
+  if (delta < 0) {
+    tryoutState.extraBySkill[skillName] = Math.max(0, current - 1);
+    return;
+  }
+
+  const baseCalculation = calculateTryoutFinalLimits(
+    tryoutState.parsed,
+    getTryoutEstimationMode(),
+    getTryoutSkillWeights(),
+    tryoutState.manualOverrides,
+    {},
+    getTryoutCurrentSeasonDay()
+  );
+  const row = baseCalculation.rows.find(item => item.name === skillName);
+  const extraUsed = getTryoutExtraUsed();
+  const skillCapacity = Number.isFinite(row?.baseLimit)
+    ? Math.max(0, TRYOUT_MAX_LIMIT - row.baseLimit)
+    : 0;
+
+  if (extraUsed >= TRYOUT_MAX_EXTRA_POINTS || current >= skillCapacity) {
+    return;
+  }
+
+  tryoutState.extraBySkill[skillName] = current + 1;
+}
+
+function setupViewTabs() {
+  document.querySelectorAll(".view-tab").forEach(button => {
+    button.addEventListener("click", () => {
+      const targetId = button.dataset.viewTarget;
+
+      document.querySelectorAll(".view-tab").forEach(tab => {
+        tab.classList.toggle("active", tab === button);
+      });
+
+      document.querySelectorAll(".view-panel").forEach(panel => {
+        const active = panel.id === targetId;
+        panel.hidden = !active;
+        panel.classList.toggle("active-view", active);
+      });
+
+      if (targetId === "tryout-analyzer-view") {
+        renderTryoutAnalyzer();
+      }
+
+      saveAppState();
+    });
+  });
+}
+
+function setupTryoutAnalyzer() {
+  const parseButton = document.getElementById("tryout-parse-button");
+  const results = document.getElementById("tryout-results");
+  const rerender = () => {
+    tryoutState.saveMessage = "";
+    renderTryoutAnalyzer();
+  };
+  const updateManualOverride = input => {
+    const skillName = input.dataset.skill;
+    const value = input.value.trim();
+
+    if (value === "") {
+      delete tryoutState.manualOverrides[skillName];
+    } else {
+      tryoutState.manualOverrides[skillName] = value;
+    }
+  };
+
+  parseButton?.addEventListener("click", () => {
+    const text = document.getElementById("tryout-input")?.value || "";
+    tryoutState.parsed = parseTryoutText(text);
+    tryoutState.manualOverrides = {};
+    tryoutState.extraBySkill = {};
+    tryoutState.saveMessage = "";
+    renderTryoutAnalyzer();
+    saveAppState();
+  });
+
+  [
+    "tryout-estimation-mode",
+    "tryout-current-season-day",
+    "tryout-leader-icon"
+  ].forEach(id => {
+    const element = document.getElementById(id);
+    element?.addEventListener("input", rerender);
+    element?.addEventListener("change", rerender);
+  });
+
+  results?.addEventListener("change", event => {
+    const input = event.target.closest(".tryout-final-limit-input");
+    if (!input || input.disabled) return;
+
+    updateManualOverride(input);
+    rerender();
+  });
+
+  results?.addEventListener("input", event => {
+    const input = event.target.closest(".tryout-final-limit-input");
+    if (!input || input.disabled) return;
+
+    updateManualOverride(input);
+  });
+
+  results?.addEventListener("click", event => {
+    const extraButton = event.target.closest(".tryout-extra-button");
+
+    if (extraButton) {
+      adjustTryoutExtraLimit(extraButton.dataset.skill, Number(extraButton.dataset.delta) || 0);
+      rerender();
+      saveAppState();
+      return;
+    }
+
+    if (event.target.closest("#tryout-save-player")) {
+      saveTryoutPlayerForComparison();
+    }
+  });
+}
 const SAVED_PLAYERS_KEY = "cplLimitComparison.savedPlayers";
 
 function getSavedPlayers() {
   try {
-    return JSON.parse(localStorage.getItem(SAVED_PLAYERS_KEY)) || [];
+    const savedPlayers = JSON.parse(localStorage.getItem(SAVED_PLAYERS_KEY)) || [];
+    return Array.isArray(savedPlayers) ? savedPlayers : [];
   } catch {
     return [];
   }
@@ -1003,12 +2153,12 @@ function setSavedPlayers(players) {
   localStorage.setItem(SAVED_PLAYERS_KEY, JSON.stringify(players));
 }
 
-function savePlayerToStorage(playerText) {
+function savePlayerToStorage(playerText, options = {}) {
   const parsed = parsePlayerText(playerText);
 
   if (!playerText.trim() || !parsed.skills.length) {
     alert("Cannot save invalid player data.");
-    return;
+    return null;
   }
 
   const savedPlayers = getSavedPlayers();
@@ -1024,18 +2174,42 @@ function savePlayerToStorage(playerText) {
     savedAt: new Date().toISOString()
   };
 
+  if (Number.isFinite(Number(options.startGames))) {
+    savedPlayer.startGames = Math.max(0, Math.round(Number(options.startGames)));
+  }
+
+  if (options.heartMode) {
+    savedPlayer.heartMode = options.heartMode;
+  }
+
+  if (options.source) {
+    savedPlayer.source = options.source;
+  }
+
+  ["loyal", "fragger", "tryhard"].forEach(abilityName => {
+    if (typeof options[abilityName] === "boolean") {
+      savedPlayer[abilityName] = options[abilityName];
+    }
+  });
+
+  let storedPlayer;
+
   if (existingIndex >= 0) {
     savedPlayers[existingIndex] = {
       ...savedPlayers[existingIndex],
       ...savedPlayer,
       id: savedPlayers[existingIndex].id
     };
+    storedPlayer = savedPlayers[existingIndex];
   } else {
     savedPlayers.push(savedPlayer);
+    storedPlayer = savedPlayer;
   }
 
   setSavedPlayers(savedPlayers);
   refreshSavedPlayerSelects();
+
+  return storedPlayer;
 }
 
 function deleteSavedPlayer(playerId) {
@@ -1064,6 +2238,39 @@ function refreshSavedPlayerSelects() {
 }
 const APP_STATE_KEY = "cplLimitComparison.lastState";
 
+function getTryoutAnalyzerState() {
+  return {
+    inputText: document.getElementById("tryout-input")?.value || "",
+    estimationMode: document.getElementById("tryout-estimation-mode")?.value || "average",
+    currentSeasonDay: document.getElementById("tryout-current-season-day")?.value || "1",
+    leaderIcon: isTryoutLeaderIconChecked(),
+    manualOverrides: { ...tryoutState.manualOverrides },
+    extraBySkill: { ...tryoutState.extraBySkill }
+  };
+}
+
+function applyTryoutAnalyzerState(state = {}) {
+  const input = document.getElementById("tryout-input");
+  const mode = document.getElementById("tryout-estimation-mode");
+  const currentSeasonDay = document.getElementById("tryout-current-season-day");
+  const leaderIcon = document.getElementById("tryout-leader-icon");
+  const inputText = state.inputText || "";
+
+  if (input) input.value = inputText;
+  if (mode) mode.value = state.estimationMode || "average";
+  if (currentSeasonDay) currentSeasonDay.value = state.currentSeasonDay || "1";
+  if (leaderIcon) leaderIcon.checked = !!state.leaderIcon;
+
+  tryoutState.manualOverrides = state.manualOverrides && typeof state.manualOverrides === "object"
+    ? { ...state.manualOverrides }
+    : {};
+  tryoutState.extraBySkill = state.extraBySkill && typeof state.extraBySkill === "object"
+    ? { ...state.extraBySkill }
+    : {};
+  tryoutState.saveMessage = "";
+  tryoutState.parsed = inputText.trim() ? parseTryoutText(inputText) : null;
+}
+
 function saveAppState() {
   const state = {
     players: getPlayerInputs().map(player => ({
@@ -1080,7 +2287,9 @@ function saveAppState() {
     applyAgeDecay: shouldApplyAgeDecay(),
     useAnalysisFeature: shouldUseAnalysisFeature(),
     gamesPerSeason: document.getElementById("games-per-season")?.value || "57",
-    seasonCount: document.getElementById("season-count")?.value || "15"
+    seasonCount: document.getElementById("season-count")?.value || "15",
+    activeView: document.querySelector(".view-panel.active-view")?.id || "limit-comparison-view",
+    tryoutAnalyzer: getTryoutAnalyzerState()
   };
 
   localStorage.setItem(APP_STATE_KEY, JSON.stringify(state));
@@ -1095,6 +2304,8 @@ function loadAppState() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  setupViewTabs();
+  setupTryoutAnalyzer();
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
   document.getElementById("add-player-button")?.addEventListener("click", () => {
     createPlayerCard();
@@ -1118,12 +2329,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.querySelectorAll(".skill-weight").forEach(input => {
-  const savedWeight = savedState.weights?.[input.dataset.skill];
+      const savedWeight = savedState.weights?.[input.dataset.skill];
 
-  if (savedWeight !== undefined && savedWeight !== null) {
-    input.value = String(savedWeight);
-  }
-});
+      if (savedWeight !== undefined && savedWeight !== null) {
+        input.value = String(savedWeight);
+      }
+    });
 
     const useWeightsInput = document.getElementById("use-skill-weights");
     if (useWeightsInput) {
@@ -1139,7 +2350,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (useAnalysisFeatureInput) {
       useAnalysisFeatureInput.checked = !!savedState.useAnalysisFeature;
     }
+
+    applyTryoutAnalyzerState(savedState.tryoutAnalyzer);
   }
+
+  syncAllSkillWeights(".skill-weight");
+  setupLinkedSkillWeights();
+
+  if (savedState?.activeView) {
+    document
+      .querySelector(`.view-tab[data-view-target="${savedState.activeView}"]`)
+      ?.click();
+  }
+
+  renderTryoutAnalyzer();
 
   document.addEventListener("input", saveAppState);
   document.addEventListener("change", saveAppState);
