@@ -2455,16 +2455,12 @@ function getNamedItemNames(player, fieldName) {
 }
 
 function getTransferSpecialNames(player) {
-  return [
-    ...getNamedItemNames(player, "specials"),
-    ...getNamedItemNames(player, "talents"),
-    ...getNamedItemNames(player, "globalModifiers")
-  ];
+  return getNamedItemNames(player, "specials");
 }
 
 function hasTransferAbility(player, abilityName) {
   const normalizedAbility = abilityName.toLowerCase();
-  return getTransferSpecialNames(player).some(name => name === normalizedAbility || name.includes(normalizedAbility));
+  return getTransferSpecialNames(player).some(name => name === normalizedAbility);
 }
 
 function getTransferPlayerAbilities(player) {
@@ -2475,61 +2471,93 @@ function getTransferPlayerAbilities(player) {
   };
 }
 
-function getHeartBonusFromSpecials(player) {
-  const names = getTransferSpecialNames(player);
-  const heartMap = [
-    ["platinum-heart", 0.08],
-    ["plat-heart", 0.08],
-    ["gold-heart", 0.05],
-    ["big-heart", 0.03],
-    ["medium-heart", 0.01],
-    ["small-heart", 0.005],
-    ["tiny-heart", 0.005]
-  ];
-
-  const match = heartMap.find(([name]) => names.includes(name));
-  return match ? match[1] : 0;
+function hasTransferFireHeart(player) {
+  return getTransferSpecialNames(player).some(name =>
+    name === "fire-heart" ||
+    name === "fireheart" ||
+    (name.includes("fire") && name.includes("heart"))
+  );
 }
 
-function getCurrentHeartBonusFromPlayer(player) {
-  const modifiers = firstDefined(player, ["globalModifiers"]) || [];
+function getTransferHeartBonus(player) {
+  return hasTransferFireHeart(player) ? 0.04 : 0;
+}
 
-  if (Array.isArray(modifiers)) {
-    const heartModifier = modifiers.find(modifier =>
-      String(modifier?.name || "").toLowerCase() === "heart" &&
-      Number.isFinite(Number(modifier?.modifierValue))
-    );
+function getTransferFixedSkillModifiers(player) {
+  const modifiers = firstDefined(player, ["skillModifiers"]) || [];
+  const modifierBySkill = {};
 
-    if (heartModifier) {
-      const value = Number(heartModifier.modifierValue);
-      return String(heartModifier.valueType || "").toLowerCase() === "fixed" ? value : value / 100;
-    }
+  if (!Array.isArray(modifiers)) return modifierBySkill;
+
+  modifiers.forEach(modifier => {
+    const skillKey = String(modifier?.skillName || "").trim().toLowerCase();
+    const value = Number(modifier?.modifierValue);
+    const valueType = String(modifier?.valueType || "").toLowerCase();
+
+    if (!skillKey || !Number.isFinite(value) || valueType !== "fixed") return;
+    if (!SKILL_NAMES.map(skillName => skillName.toLowerCase()).includes(skillKey)) return;
+
+    modifierBySkill[skillKey] = (modifierBySkill[skillKey] || 0) + value;
+  });
+
+  return modifierBySkill;
+}
+
+function sumSkillField(player, suffix) {
+  const values = SKILL_NAMES.map(skillName => {
+    const value = Number(player[`${skillName.toLowerCase()}Skill${suffix}`]);
+    return Number.isFinite(value) ? value : null;
+  });
+
+  return values.every(value => value !== null)
+    ? values.reduce((total, value) => total + value, 0)
+    : null;
+}
+
+function stripTransferLocalSkillModifiers(player) {
+  const fixedModifiers = getTransferFixedSkillModifiers(player);
+  const sanitized = {
+    ...player,
+    skillModifiers: [],
+    globalModifiers: []
+  };
+
+  SKILL_NAMES.forEach(skillName => {
+    const skillKey = skillName.toLowerCase();
+    const modifier = fixedModifiers[skillKey] || 0;
+
+    if (!modifier) return;
+
+    ["Value", "Limit"].forEach(suffix => {
+      const fieldName = `${skillKey}Skill${suffix}`;
+      const value = Number(sanitized[fieldName]);
+
+      if (Number.isFinite(value)) {
+        sanitized[fieldName] = Math.max(0, value - modifier);
+      }
+    });
+  });
+
+  const totalSkill = sumSkillField(sanitized, "Value");
+  const totalLimit = sumSkillField(sanitized, "Limit");
+
+  if (totalSkill !== null) {
+    sanitized.totalSkill = totalSkill;
   }
 
-  return getHeartBonusFromSpecials(player);
-}
+  if (totalLimit !== null) {
+    sanitized.totalLimit = totalLimit;
+  }
 
-function getStartingGamesForHeartBonus(heartBonus, loyal = false) {
-  if (!Number.isFinite(heartBonus) || heartBonus <= 0) return 0;
-
-  const multiplier = loyal ? 0.75 : 1;
-  const thresholds = [
-    [0.08, Math.floor(800 * multiplier)],
-    [0.05, Math.floor(400 * multiplier)],
-    [0.03, Math.floor(200 * multiplier)],
-    [0.01, Math.floor(100 * multiplier)],
-    [0.005, Math.floor(50 * multiplier)]
-  ];
-
-  const match = thresholds.find(([bonus]) => heartBonus >= bonus);
-  return match ? match[1] : 0;
+  return sanitized;
 }
 
 function normalizeTransferPlayer(rawPlayer) {
-  const importedPlayer = normalizeCplPlayer(rawPlayer);
+  const comparisonPlayer = stripTransferLocalSkillModifiers(rawPlayer);
+  const importedPlayer = normalizeCplPlayer(comparisonPlayer);
   const abilities = getTransferPlayerAbilities(rawPlayer);
-  const currentHeartBonus = getCurrentHeartBonusFromPlayer(rawPlayer);
-  const startGames = getStartingGamesForHeartBonus(currentHeartBonus, abilities.loyal);
+  const currentHeartBonus = getTransferHeartBonus(rawPlayer);
+  const heartMode = hasTransferFireHeart(rawPlayer) ? "constant4" : "progressive";
 
   return {
     ...importedPlayer,
@@ -2538,12 +2566,13 @@ function normalizeTransferPlayer(rawPlayer) {
     startBid: firstDefined(rawPlayer, ["startBid"]),
     deadline: firstDefined(rawPlayer, ["deadline"]),
     sellingTeamId: firstDefined(rawPlayer, ["sellingTeamId"]),
-    startGames,
-    heartMode: "progressive",
+    startGames: 0,
+    heartMode,
     loyal: abilities.loyal,
     fragger: abilities.fragger,
     tryhard: abilities.tryhard,
     currentHeartBonus,
+    fireHeart: heartMode === "constant4",
     rawTransferPlayer: rawPlayer
   };
 }
@@ -2590,7 +2619,7 @@ function getRelevantSpecialLabels(player) {
   if (player.fragger) labels.push("Fragger");
   if (player.tryhard) labels.push("Tryhard");
   if (player.loyal) labels.push("Loyal");
-  if (player.currentHeartBonus > 0) labels.push(`Heart ${(player.currentHeartBonus * 100).toFixed(1)}%`);
+  if (player.fireHeart) labels.push("Fire Heart 4.0%");
 
   return labels;
 }
