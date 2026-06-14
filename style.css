@@ -367,6 +367,120 @@ button:disabled {
   line-height: 1.45;
 }
 
+.transfer-suggestions-panel {
+  color: #fff8c9;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.transfer-suggestions-panel h2 {
+  margin-bottom: 12px;
+  color: #ffffff;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.transfer-suggestion-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+  color: rgba(255, 248, 201, 0.86);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.transfer-suggestion-list {
+  display: grid;
+  gap: 8px;
+}
+
+.transfer-suggestion-card {
+  display: grid;
+  grid-template-columns: 34px minmax(160px, 1.5fr) repeat(3, minmax(82px, 0.75fr)) minmax(180px, 1.1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: #202124;
+}
+
+.transfer-suggestion-rank {
+  color: #ffcf70;
+  font-weight: 900;
+}
+
+.transfer-suggestion-main strong,
+.transfer-suggestion-metric strong {
+  display: block;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.transfer-suggestion-main span,
+.transfer-suggestion-metric span,
+.transfer-suggestion-detail span {
+  display: block;
+  color: rgba(255, 248, 201, 0.72);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.transfer-suggestion-detail {
+  min-width: 0;
+}
+
+.transfer-suggestion-detail span {
+  overflow-wrap: anywhere;
+}
+
+.transfer-suggestion-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.transfer-suggestion-actions a,
+.transfer-suggestion-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.transfer-suggestion-actions a {
+  background: #3a3a3a;
+}
+
+.transfer-suggestion-actions button {
+  background: #2d8a4e;
+}
+
+.transfer-suggestion-status,
+.transfer-suggestion-warning {
+  margin: 8px 0 0;
+  color: rgba(255, 248, 201, 0.86);
+  font-weight: 700;
+}
+
+.transfer-suggestion-warning {
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 122, 0, 0.25);
+  border-radius: 8px;
+  background: rgba(255, 122, 0, 0.12);
+  color: #ffcf70;
+}
+
 @media (max-width: 960px) {
   .app {
     width: calc(100% - 24px);
@@ -387,6 +501,21 @@ button:disabled {
 
   .team-import-row {
     grid-template-columns: 1fr;
+  }
+
+  .transfer-suggestion-card {
+    grid-template-columns: 30px 1fr;
+  }
+
+  .transfer-suggestion-metric,
+  .transfer-suggestion-detail,
+  .transfer-suggestion-actions {
+    grid-column: 2;
+  }
+
+  .transfer-suggestion-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 

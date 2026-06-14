@@ -97,16 +97,27 @@ const ANALYSIS_AGE_DECAY = {
 
 const RANKING_CACHE_KEY = "cplRankingPlayersCache_v4";
 const IMPORTED_PLAYERS_KEY = "cplImportedPlayers_v1";
+const TRANSFER_LIST_CACHE_KEY = "cplTransferListCache_v1";
 const CPL_PROXY_BASE = "https://cpl-proxy.dissenter-cpl-tools.workers.dev";
 const RANKING_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RANKING_REQUEST_DELAY_MS = 200;
-const RANKING_FETCH_RETRY_COUNT = 4;
+const CPL_FETCH_RETRY_COUNT = 4;
 const RANKING_MAX_PAGES = 100;
 const RANKING_CONFIG = {
   season: 12,
   country: "All countries",
   type: "official",
   limit: 200
+};
+const TRANSFER_LIST_CONFIG = {
+  ageRange: "13-44",
+  limit: 5000
+};
+const TRANSFER_SUGGESTION_LIMIT = 10;
+
+const transferSuggestionState = {
+  requestId: 0,
+  suggestions: []
 };
 
 const maxAgeMarkerPlugin = {
@@ -1104,6 +1115,7 @@ function runComparison() {
   const playerInputs = getPlayerInputs();
 
   if (playerInputs.length < 2) {
+    clearTransferSuggestions();
     alert("Please add at least two players.");
     return;
   }
@@ -1114,6 +1126,7 @@ function runComparison() {
   const applyAgeDecay = shouldApplyAgeDecay();
   const useAnalysisFeature = shouldUseAnalysisFeature();
   if (selectedSkills.length === 0) {
+    clearTransferSuggestions();
     alert("Please select at least one skill.");
     return;
   }
@@ -1163,12 +1176,22 @@ function runComparison() {
     .filter(Boolean);
 
   if (parsedPlayers.length < 2) {
+    clearTransferSuggestions();
     alert("Please paste at least two valid players.");
     return;
   }
 
   renderChart(parsedPlayers, weightsEnabled, applyAgeDecay, useAnalysisFeature);
   renderDecisionSummary(parsedPlayers, selectedSkills, weights, weightsEnabled, applyAgeDecay, useAnalysisFeature);
+  updateTransferSuggestionsForComparison(parsedPlayers, {
+    seasonCount,
+    gamesPerSeason,
+    selectedSkills,
+    weights,
+    weightsEnabled,
+    applyAgeDecay,
+    useAnalysisFeature
+  });
   saveAppState();
 }
 
@@ -1832,7 +1855,7 @@ async function fetchJsonWithRetry(url, options, label) {
   let lastError = null;
   let lastStatus = null;
 
-  for (let attempt = 1; attempt <= RANKING_FETCH_RETRY_COUNT; attempt++) {
+  for (let attempt = 1; attempt <= CPL_FETCH_RETRY_COUNT; attempt++) {
     try {
       const response = await fetch(url, options);
 
@@ -1849,7 +1872,7 @@ async function fetchJsonWithRetry(url, options, label) {
       lastError = error;
     }
 
-    if (attempt < RANKING_FETCH_RETRY_COUNT) {
+    if (attempt < CPL_FETCH_RETRY_COUNT) {
       await delay(RANKING_REQUEST_DELAY_MS * attempt);
     }
   }
@@ -2260,6 +2283,581 @@ function createPlayerTextFromImportedPlayer(player) {
   });
 
   return lines.join("\n");
+}
+
+function getTransferListUrl() {
+  const params = new URLSearchParams({
+    age_range: TRANSFER_LIST_CONFIG.ageRange,
+    limit: String(TRANSFER_LIST_CONFIG.limit)
+  });
+
+  return `${CPL_PROXY_BASE}/transfers?${params.toString()}`;
+}
+
+async function fetchTransferList() {
+  return fetchJsonWithRetry(getTransferListUrl(), {
+    headers: {
+      "Accept": "application/json"
+    }
+  }, "Transfer list");
+}
+
+function getTransferListCache() {
+  try {
+    return JSON.parse(localStorage.getItem(TRANSFER_LIST_CACHE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function setTransferListCache(rawData) {
+  try {
+    localStorage.setItem(TRANSFER_LIST_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      age_range: TRANSFER_LIST_CONFIG.ageRange,
+      limit: TRANSFER_LIST_CONFIG.limit,
+      transfers: rawData
+    }));
+  } catch (error) {
+    console.warn("CPL transfer list cache write failed", error);
+  }
+}
+
+async function loadTransferListWithCache(forceRefresh = false) {
+  const cached = getTransferListCache();
+  const cacheMatchesConfig =
+    cached?.age_range === TRANSFER_LIST_CONFIG.ageRange &&
+    cached?.limit === TRANSFER_LIST_CONFIG.limit;
+  const cacheIsFresh = cached?.timestamp && Date.now() - cached.timestamp < RANKING_CACHE_MAX_AGE_MS;
+
+  if (!forceRefresh && cacheMatchesConfig && cacheIsFresh && cached.transfers) {
+    const players = extractTransferPlayers(cached.transfers);
+    console.info("CPL transfer list loaded from cache", {
+      rawCount: getTransferRawCount(cached.transfers),
+      playerCount: players.length
+    });
+
+    return {
+      source: "cache",
+      rawData: cached.transfers,
+      players
+    };
+  }
+
+  const rawData = await fetchTransferList();
+  setTransferListCache(rawData);
+  const players = extractTransferPlayers(rawData);
+  console.info("CPL transfer list loaded from API", {
+    rawCount: getTransferRawCount(rawData),
+    playerCount: players.length
+  });
+
+  return {
+    source: "api",
+    rawData,
+    players
+  };
+}
+
+function getTransferRawCount(rawData) {
+  if (Array.isArray(rawData)) return rawData.length;
+  if (Array.isArray(rawData?.transfers)) return rawData.transfers.length;
+  if (Array.isArray(rawData?.players)) return rawData.players.length;
+  if (Array.isArray(rawData?.data)) return rawData.data.length;
+  return 0;
+}
+
+function hasSkillData(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  return SKILL_NAMES.some(skillName => {
+    const key = skillName.toLowerCase();
+    return (
+      firstDefined(value, [`${key}SkillLimit`, `skills.${key}.limit`, `skills.${skillName}.limit`]) !== null ||
+      firstDefined(value, [`${key}SkillValue`, `skills.${key}.value`, `skills.${skillName}.value`]) !== null
+    );
+  });
+}
+
+function isTransferPlayerLike(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const id = firstDefined(value, ["id", "playerId"]);
+  const name = firstDefined(value, ["nick", "name", "nickname"]);
+  const hasTotals =
+    firstDefined(value, ["totalSkill", "skillTotal"]) !== null ||
+    firstDefined(value, ["totalLimit", "limitTotal"]) !== null;
+
+  return id !== null && name !== null && (hasSkillData(value) || hasTotals);
+}
+
+function mergeTransferPlayer(transfer, player) {
+  if (!transfer || transfer === player) return player;
+
+  return {
+    ...player,
+    transferId: firstDefined(transfer, ["transferId", "id"]),
+    startBid: firstDefined(transfer, ["startBid"]),
+    deadline: firstDefined(transfer, ["deadline"]),
+    sellingTeamId: firstDefined(transfer, ["sellingTeamId", "sellingTeam.id"]),
+    transferStatus: firstDefined(transfer, ["status"]),
+    transfer
+  };
+}
+
+function addTransferCandidate(playerMap, candidate) {
+  if (!isTransferPlayerLike(candidate)) return;
+
+  const id = firstDefined(candidate, ["id", "playerId"]);
+  if (id === null) return;
+
+  const key = String(id);
+  playerMap.set(key, {
+    ...playerMap.get(key),
+    ...candidate
+  });
+}
+
+function extractTransferPlayers(rawData) {
+  const playerMap = new Map();
+  const visited = new WeakSet();
+
+  function visit(value, parent = null) {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+
+    if (Array.isArray(value)) {
+      value.forEach(item => visit(item, parent));
+      return;
+    }
+
+    if (value.player && typeof value.player === "object") {
+      addTransferCandidate(playerMap, mergeTransferPlayer(value, value.player));
+    } else {
+      addTransferCandidate(playerMap, parent ? mergeTransferPlayer(parent, value) : value);
+    }
+
+    Object.values(value).forEach(child => visit(child, value));
+  }
+
+  visit(rawData);
+  return Array.from(playerMap.values());
+}
+
+function getNamedItemNames(player, fieldName) {
+  const items = firstDefined(player, [fieldName]) || [];
+
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map(item => String(item?.name ?? item ?? "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function getTransferSpecialNames(player) {
+  return [
+    ...getNamedItemNames(player, "specials"),
+    ...getNamedItemNames(player, "talents"),
+    ...getNamedItemNames(player, "globalModifiers")
+  ];
+}
+
+function hasTransferAbility(player, abilityName) {
+  const normalizedAbility = abilityName.toLowerCase();
+  return getTransferSpecialNames(player).some(name => name === normalizedAbility || name.includes(normalizedAbility));
+}
+
+function getTransferPlayerAbilities(player) {
+  return {
+    loyal: hasTransferAbility(player, "loyal"),
+    fragger: hasTransferAbility(player, "fragger"),
+    tryhard: hasTransferAbility(player, "tryhard")
+  };
+}
+
+function getHeartBonusFromSpecials(player) {
+  const names = getTransferSpecialNames(player);
+  const heartMap = [
+    ["platinum-heart", 0.08],
+    ["plat-heart", 0.08],
+    ["gold-heart", 0.05],
+    ["big-heart", 0.03],
+    ["medium-heart", 0.01],
+    ["small-heart", 0.005],
+    ["tiny-heart", 0.005]
+  ];
+
+  const match = heartMap.find(([name]) => names.includes(name));
+  return match ? match[1] : 0;
+}
+
+function getCurrentHeartBonusFromPlayer(player) {
+  const modifiers = firstDefined(player, ["globalModifiers"]) || [];
+
+  if (Array.isArray(modifiers)) {
+    const heartModifier = modifiers.find(modifier =>
+      String(modifier?.name || "").toLowerCase() === "heart" &&
+      Number.isFinite(Number(modifier?.modifierValue))
+    );
+
+    if (heartModifier) {
+      const value = Number(heartModifier.modifierValue);
+      return String(heartModifier.valueType || "").toLowerCase() === "fixed" ? value : value / 100;
+    }
+  }
+
+  return getHeartBonusFromSpecials(player);
+}
+
+function getStartingGamesForHeartBonus(heartBonus, loyal = false) {
+  if (!Number.isFinite(heartBonus) || heartBonus <= 0) return 0;
+
+  const multiplier = loyal ? 0.75 : 1;
+  const thresholds = [
+    [0.08, Math.floor(800 * multiplier)],
+    [0.05, Math.floor(400 * multiplier)],
+    [0.03, Math.floor(200 * multiplier)],
+    [0.01, Math.floor(100 * multiplier)],
+    [0.005, Math.floor(50 * multiplier)]
+  ];
+
+  const match = thresholds.find(([bonus]) => heartBonus >= bonus);
+  return match ? match[1] : 0;
+}
+
+function normalizeTransferPlayer(rawPlayer) {
+  const importedPlayer = normalizeCplPlayer(rawPlayer);
+  const abilities = getTransferPlayerAbilities(rawPlayer);
+  const currentHeartBonus = getCurrentHeartBonusFromPlayer(rawPlayer);
+  const startGames = getStartingGamesForHeartBonus(currentHeartBonus, abilities.loyal);
+
+  return {
+    ...importedPlayer,
+    source: "transferList",
+    transferId: firstDefined(rawPlayer, ["transferId"]),
+    startBid: firstDefined(rawPlayer, ["startBid"]),
+    deadline: firstDefined(rawPlayer, ["deadline"]),
+    sellingTeamId: firstDefined(rawPlayer, ["sellingTeamId"]),
+    startGames,
+    heartMode: "progressive",
+    loyal: abilities.loyal,
+    fragger: abilities.fragger,
+    tryhard: abilities.tryhard,
+    currentHeartBonus,
+    rawTransferPlayer: rawPlayer
+  };
+}
+
+function getCplPlayerUrl(player) {
+  const playerId = firstDefined(player, ["id", "playerId"]);
+  const teamId = firstDefined(player, ["teamId", "team.id", "sellingTeamId"]);
+
+  if (!teamId) {
+    return `https://www.cplmanager.com/cpl/teams/free-agent/players/${encodeURIComponent(playerId)}`;
+  }
+
+  return `https://www.cplmanager.com/cpl/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}`;
+}
+
+function getComparableProjectionPoint(player, seasonCount) {
+  return getProjectionPoint(player, seasonCount) || player.projection[player.projection.length - 1] || null;
+}
+
+function getWeakestComparedPlayerAtSeason(comparedPlayers, seasonCount) {
+  return comparedPlayers
+    .map(player => {
+      const point = getComparableProjectionPoint(player, seasonCount);
+      return point ? { player, point, value: point.effectiveLimit } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.value - b.value)[0] || null;
+}
+
+function getTopSkillLimitText(player, selectedSkills, maxItems = 3) {
+  const parsed = parsePlayerText(player.text || "");
+
+  return parsed.skills
+    .filter(skill => selectedSkills.includes(skill.name) && Number.isFinite(Number(skill.max)))
+    .sort((a, b) => Number(b.max) - Number(a.max))
+    .slice(0, maxItems)
+    .map(skill => `${skill.name} ${skill.max}`)
+    .join(", ");
+}
+
+function getRelevantSpecialLabels(player) {
+  const labels = [];
+
+  if (player.fragger) labels.push("Fragger");
+  if (player.tryhard) labels.push("Tryhard");
+  if (player.loyal) labels.push("Loyal");
+  if (player.currentHeartBonus > 0) labels.push(`Heart ${(player.currentHeartBonus * 100).toFixed(1)}%`);
+
+  return labels;
+}
+
+function calculateTransferSuggestions({
+  transferPlayers,
+  comparedPlayers,
+  seasonCount,
+  gamesPerSeason,
+  selectedSkills,
+  weights,
+  weightsEnabled,
+  applyAgeDecay,
+  useAnalysisFeature,
+  limit = TRANSFER_SUGGESTION_LIMIT
+}) {
+  if (!Array.isArray(comparedPlayers) || comparedPlayers.length < 1) {
+    return {
+      weakest: null,
+      normalizedPlayers: [],
+      suggestions: []
+    };
+  }
+
+  const weakest = getWeakestComparedPlayerAtSeason(comparedPlayers, seasonCount);
+  if (!weakest) {
+    return {
+      weakest: null,
+      normalizedPlayers: [],
+      suggestions: []
+    };
+  }
+
+  const normalizedPlayers = transferPlayers
+    .map(rawPlayer => {
+      try {
+        return normalizeTransferPlayer(rawPlayer);
+      } catch (error) {
+        console.warn("CPL transfer player normalization failed", { rawPlayer, error });
+        return null;
+      }
+    })
+    .filter(player => player?.text);
+
+  const suggestions = normalizedPlayers
+    .map(player => {
+      const parsedPlayer = parsePlayerText(player.text);
+      if (!parsedPlayer.skills.length) return null;
+
+      const projection = buildProjection(
+        parsedPlayer,
+        selectedSkills,
+        player.startGames || 0,
+        player.heartMode || "progressive",
+        gamesPerSeason,
+        seasonCount,
+        !!player.loyal,
+        weights,
+        weightsEnabled,
+        {
+          fragger: !!player.fragger,
+          tryhard: !!player.tryhard
+        },
+        applyAgeDecay,
+        useAnalysisFeature
+      );
+
+      const finalPoint = getProjectionPoint({ projection }, seasonCount);
+      if (!finalPoint) return null;
+
+      const improvement = finalPoint.effectiveLimit - weakest.value;
+      if (improvement <= 0) return null;
+
+      return {
+        player,
+        parsedPlayer,
+        projection,
+        finalPoint,
+        improvement,
+        improvementPercent: weakest.value > 0 ? improvement / weakest.value : 0,
+        cplUrl: getCplPlayerUrl(player),
+        topSkillText: getTopSkillLimitText(player, selectedSkills),
+        specialLabels: getRelevantSpecialLabels(player)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.improvement - a.improvement)
+    .slice(0, limit);
+
+  return {
+    weakest,
+    normalizedPlayers,
+    suggestions
+  };
+}
+
+function renderTransferSuggestionsLoading() {
+  const container = document.getElementById("transfer-suggestions");
+  if (!container) return;
+
+  container.hidden = false;
+  container.innerHTML = `
+    <h2>Transfer List Suggestions</h2>
+    <p class="transfer-suggestion-status">Loading transfer list...</p>
+  `;
+}
+
+function clearTransferSuggestions() {
+  const container = document.getElementById("transfer-suggestions");
+  transferSuggestionState.requestId += 1;
+  transferSuggestionState.suggestions = [];
+
+  if (!container) return;
+
+  container.hidden = true;
+  container.innerHTML = "";
+}
+
+function renderTransferSuggestionsWarning(message) {
+  const container = document.getElementById("transfer-suggestions");
+  if (!container) return;
+
+  container.hidden = false;
+  container.innerHTML = `
+    <h2>Transfer List Suggestions</h2>
+    <p class="transfer-suggestion-warning">${escapeHtml(message)}</p>
+  `;
+}
+
+function renderTransferSuggestions(result, context = {}) {
+  const container = document.getElementById("transfer-suggestions");
+  if (!container) return;
+
+  transferSuggestionState.suggestions = result.suggestions;
+
+  if (!result.weakest) {
+    container.hidden = true;
+    container.innerHTML = "";
+    return;
+  }
+
+  container.hidden = false;
+
+  if (!result.suggestions.length) {
+    container.innerHTML = `
+      <h2>Transfer List Suggestions</h2>
+      <p class="transfer-suggestion-status">No transfer-list players beat ${escapeHtml(result.weakest.player.playerName)} at S${context.seasonCount}.</p>
+    `;
+    return;
+  }
+
+  const suggestionCards = result.suggestions.map((suggestion, index) => {
+    const player = suggestion.player;
+    const displayName = player.name || player.nick || "Unknown Player";
+    const nick = player.nick && player.nick !== displayName ? ` (${player.nick})` : "";
+    const teamText = player.teamId ? `Team ${player.teamId}` : "Free Agent";
+    const totalText = `${player.totalSkill ?? "?"} / ${player.totalLimit ?? "?"}`;
+    const specialText = suggestion.specialLabels.length ? suggestion.specialLabels.join(", ") : "None";
+    const skillText = suggestion.topSkillText || "No selected limits";
+
+    return `
+      <article class="transfer-suggestion-card">
+        <div class="transfer-suggestion-rank">#${index + 1}</div>
+        <div class="transfer-suggestion-main">
+          <strong>${escapeHtml(displayName)}${escapeHtml(nick)}</strong>
+          <span>${escapeHtml(teamText)} · Age ${escapeHtml(player.age ?? "?")}</span>
+        </div>
+        <div class="transfer-suggestion-metric">
+          <span>Total</span>
+          <strong>${escapeHtml(totalText)}</strong>
+        </div>
+        <div class="transfer-suggestion-metric">
+          <span>S${context.seasonCount}</span>
+          <strong>${suggestion.finalPoint.effectiveLimit.toFixed(2)}</strong>
+        </div>
+        <div class="transfer-suggestion-metric summary-positive">
+          <span>Gain</span>
+          <strong>+${suggestion.improvement.toFixed(2)} (${(suggestion.improvementPercent * 100).toFixed(1)}%)</strong>
+        </div>
+        <div class="transfer-suggestion-detail">
+          <span>${escapeHtml(specialText)}</span>
+          <span>${escapeHtml(skillText)}</span>
+        </div>
+        <div class="transfer-suggestion-actions">
+          <a href="${escapeHtml(suggestion.cplUrl)}" target="_blank" rel="noopener noreferrer">Open in CPL</a>
+          <button type="button" class="transfer-load-button" data-player-id="${escapeHtml(player.id)}">Load into Tool</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  container.innerHTML = `
+    <h2>Transfer List Suggestions</h2>
+    <div class="transfer-suggestion-meta">
+      <span>Weakest compared: <strong>${escapeHtml(result.weakest.player.playerName)}</strong> (${result.weakest.value.toFixed(2)})</span>
+      <span>Source: ${escapeHtml(context.source || "cache")} · ${result.normalizedPlayers.length} valid transfer players</span>
+    </div>
+    <div class="transfer-suggestion-list">
+      ${suggestionCards}
+    </div>
+    <p class="transfer-suggestion-status" data-transfer-save-status></p>
+  `;
+}
+
+async function updateTransferSuggestionsForComparison(comparedPlayers, comparisonSettings) {
+  const requestId = transferSuggestionState.requestId + 1;
+  transferSuggestionState.requestId = requestId;
+  transferSuggestionState.suggestions = [];
+  renderTransferSuggestionsLoading();
+
+  try {
+    const transferResult = await loadTransferListWithCache(false);
+    if (requestId !== transferSuggestionState.requestId) return;
+
+    const suggestionResult = calculateTransferSuggestions({
+      transferPlayers: transferResult.players,
+      comparedPlayers,
+      ...comparisonSettings
+    });
+
+    console.info("CPL transfer suggestions calculated", {
+      source: transferResult.source,
+      transferPlayersFound: transferResult.players.length,
+      validNormalizedPlayers: suggestionResult.normalizedPlayers.length,
+      weakestComparedPlayer: suggestionResult.weakest
+        ? {
+            name: suggestionResult.weakest.player.playerName,
+            value: suggestionResult.weakest.value
+          }
+        : null,
+      suggestions: suggestionResult.suggestions.length
+    });
+
+    renderTransferSuggestions(suggestionResult, {
+      source: transferResult.source,
+      seasonCount: comparisonSettings.seasonCount
+    });
+  } catch (error) {
+    console.warn("CPL transfer suggestions failed", error);
+    if (requestId === transferSuggestionState.requestId) {
+      renderTransferSuggestionsWarning(error?.message || "Transfer list suggestions failed.");
+    }
+  }
+}
+
+function saveImportedPlayer(player) {
+  saveImportedPlayers([player]);
+  return player;
+}
+
+function handleTransferSuggestionClick(event) {
+  const button = event.target.closest(".transfer-load-button");
+  if (!button) return;
+
+  const playerId = button.dataset.playerId;
+  const suggestion = transferSuggestionState.suggestions.find(item => String(item.player.id) === String(playerId));
+  const status = document.querySelector("[data-transfer-save-status]");
+
+  if (!suggestion) {
+    if (status) status.textContent = "Transfer player is no longer available in the current suggestions.";
+    return;
+  }
+
+  const savedPlayer = saveImportedPlayer(suggestion.player);
+  if (status) {
+    status.textContent = `Saved ${savedPlayer.nick || savedPlayer.name} to the player dropdown.`;
+  }
 }
 
 function renderTryoutAnalyzer() {
@@ -2694,7 +3292,12 @@ function getSelectablePlayers() {
     value: `imported:${player.id}`,
     id: player.id,
     name: `${player.nick || player.name} (Team ${player.teamId || "?"})`,
-    text: player.text
+    text: player.text,
+    startGames: player.startGames,
+    heartMode: player.heartMode,
+    loyal: player.loyal,
+    fragger: player.fragger,
+    tryhard: player.tryhard
   }));
 
   return [...savedPlayers, ...importedPlayers];
@@ -2973,6 +3576,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupViewTabs();
   setupTryoutAnalyzer();
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
+  document.getElementById("transfer-suggestions")?.addEventListener("click", handleTransferSuggestionClick);
   document.getElementById("load-team-button")?.addEventListener("click", loadTeamPlayers);
   document.getElementById("team-id-input")?.addEventListener("keydown", event => {
     if (event.key === "Enter") {
