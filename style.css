@@ -171,6 +171,7 @@ select {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 
   margin: 0;
   color: #fff8c9;
@@ -580,6 +581,8 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .skill-weight {
@@ -1203,13 +1206,13 @@ button:disabled {
   }
 
   .tryout-skill-row {
-    grid-template-columns: 96px minmax(120px, 1fr) 58px;
+    grid-template-columns: minmax(88px, 0.78fr) minmax(100px, 1fr) 54px;
     gap: 8px;
   }
 
   .tryout-skill-edit {
     grid-column: 2 / 4;
-    grid-template-columns: 62px 74px 96px;
+    grid-template-columns: 58px 72px 92px;
   }
 
   .tryout-skill-name {
@@ -1223,5 +1226,203 @@ button:disabled {
 
   .tryout-tier-panel {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    font-size: 11px;
+  }
+
+  .app {
+    width: 100%;
+    margin: 0;
+    padding: 10px;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  h1 {
+    font-size: 18px;
+  }
+
+  .panel {
+    padding: 10px;
+    border-radius: 10px;
+  }
+
+  input,
+  select,
+  button {
+    min-height: 36px;
+    font-size: 14px;
+  }
+
+  textarea {
+    font-size: 12px;
+  }
+
+  .view-tabs {
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .view-tab {
+    flex: 0 0 auto;
+  }
+
+  .saved-player-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .saved-player-row select {
+    grid-column: 1 / -1;
+  }
+
+  .saved-player-row button {
+    min-height: 34px;
+  }
+
+  .skill-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .skill-weight-row {
+    grid-template-columns: minmax(0, 1fr) 92px;
+    gap: 10px;
+  }
+
+  .skill-grid label {
+    font-size: 14px;
+    white-space: normal;
+  }
+
+  .skill-grid input[type="checkbox"],
+  .use-weights-label input[type="checkbox"],
+  .global-option-label input[type="checkbox"],
+  .player-ability-label input[type="checkbox"],
+  .tryout-checkbox-label input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+  }
+
+  .skill-weight,
+  .tryout-skill-weight {
+    width: 100%;
+    height: 36px;
+    font-size: 14px;
+  }
+
+  .use-weights-label,
+  .global-option-label,
+  .player-ability-label {
+    font-size: 14px;
+  }
+
+  .tryout-skill-card {
+    padding: 10px 8px;
+  }
+
+  .tryout-skill-card-header {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .tryout-total-pill {
+    width: 100%;
+    min-width: 0;
+    justify-content: space-between;
+  }
+
+  .tryout-skill-bars {
+    gap: 10px;
+  }
+
+  .tryout-skill-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 10px;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .tryout-skill-name {
+    text-align: left;
+    font-size: 15px;
+  }
+
+  .tryout-skill-values {
+    justify-content: flex-end;
+    font-size: 15px;
+  }
+
+  .tryout-skill-values strong {
+    font-size: 18px;
+  }
+
+  .tryout-skill-track {
+    grid-column: 1 / -1;
+    height: 10px;
+  }
+
+  .tryout-skill-edit {
+    grid-column: 1 / -1;
+    grid-template-columns: 72px minmax(76px, 1fr) 118px;
+    gap: 8px;
+  }
+
+  .tryout-final-limit-input,
+  .tryout-fixed-limit {
+    width: 72px;
+    height: 34px;
+  }
+
+  .tryout-source {
+    min-width: 0;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .tryout-extra-control {
+    grid-template-columns: 34px 42px 34px;
+    justify-content: end;
+  }
+
+  .tryout-extra-button,
+  .tryout-extra-pill {
+    height: 34px;
+  }
+
+  .tryout-extra-button {
+    width: 34px;
+  }
+
+  .tryout-visual-stats {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 380px) {
+  .tryout-skill-edit {
+    grid-template-columns: 66px minmax(68px, 1fr) 110px;
+  }
+
+  .tryout-final-limit-input,
+  .tryout-fixed-limit {
+    width: 66px;
+  }
+
+  .tryout-extra-control {
+    grid-template-columns: 32px 38px 32px;
+  }
+
+  .tryout-extra-button {
+    width: 32px;
   }
 }
