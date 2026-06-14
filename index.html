@@ -19,6 +19,18 @@
     </nav>
 
     <section id="limit-comparison-view" class="view-panel active-view">
+      <section class="panel team-import-panel">
+        <h2>Team import</h2>
+        <div class="team-import-row">
+          <label>
+            Team ID
+            <input id="team-id-input" type="number" min="1" placeholder="e.g. 233">
+          </label>
+          <button id="load-team-button" type="button">Load Team</button>
+        </div>
+        <div id="team-import-status" class="team-import-status" role="status" aria-live="polite"></div>
+      </section>
+
       <section class="player-toolbar">
         <button id="add-player-button" type="button">+ Add player</button>
       </section>

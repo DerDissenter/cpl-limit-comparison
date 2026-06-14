@@ -95,6 +95,18 @@ const ANALYSIS_AGE_DECAY = {
   40: -31
 };
 
+const RANKING_CACHE_KEY = "cplRankingPlayersCache_v1";
+const IMPORTED_PLAYERS_KEY = "cplImportedPlayers_v1";
+const CPL_PROXY_BASE = "https://cpl-proxy.dissenter-cpl-tools.workers.dev";
+const RANKING_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const RANKING_REQUEST_DELAY_MS = 200;
+const RANKING_CONFIG = {
+  season: 12,
+  country: "All countries",
+  type: "official",
+  limit: 200
+};
+
 const maxAgeMarkerPlugin = {
   id: "maxAgeMarker",
   afterDatasetsDraw(chart) {
@@ -1003,28 +1015,28 @@ function createPlayerCard(initialData = {}) {
 
   card.querySelector(".load-saved-player-button").addEventListener("click", () => {
     const select = card.querySelector(".saved-player-select");
-    const playerId = select.value;
+    const selectedValue = select.value;
 
-    if (!playerId) return;
+    if (!selectedValue) return;
 
-    const savedPlayer = getSavedPlayers().find(player => player.id === playerId);
+    const selectedPlayer = getSelectablePlayers().find(player => player.value === selectedValue);
 
-    if (!savedPlayer) return;
+    if (!selectedPlayer) return;
 
-    card.querySelector(".player-input").value = savedPlayer.text;
+    card.querySelector(".player-input").value = selectedPlayer.text;
 
-    if (Number.isFinite(savedPlayer.startGames)) {
-      card.querySelector(".player-games").value = String(savedPlayer.startGames);
+    if (Number.isFinite(selectedPlayer.startGames)) {
+      card.querySelector(".player-games").value = String(selectedPlayer.startGames);
     }
 
-    if (savedPlayer.heartMode) {
-      card.querySelector(".player-heart-mode").value = savedPlayer.heartMode;
+    if (selectedPlayer.heartMode) {
+      card.querySelector(".player-heart-mode").value = selectedPlayer.heartMode;
     }
 
     ["loyal", "fragger", "tryhard"].forEach(abilityName => {
-      if (typeof savedPlayer[abilityName] === "boolean") {
+      if (typeof selectedPlayer[abilityName] === "boolean") {
         const checkbox = card.querySelector(`.player-${abilityName}`);
-        if (checkbox) checkbox.checked = savedPlayer[abilityName];
+        if (checkbox) checkbox.checked = selectedPlayer[abilityName];
       }
     });
 
@@ -1033,19 +1045,23 @@ function createPlayerCard(initialData = {}) {
 
   card.querySelector(".delete-saved-player-button").addEventListener("click", () => {
     const select = card.querySelector(".saved-player-select");
-    const playerId = select.value;
+    const selectedValue = select.value;
 
-    if (!playerId) return;
+    if (!selectedValue) return;
 
-    const savedPlayer = getSavedPlayers().find(player => player.id === playerId);
+    const selectedPlayer = getSelectablePlayers().find(player => player.value === selectedValue);
 
-    if (!savedPlayer) return;
+    if (!selectedPlayer) return;
 
-    const confirmed = confirm(`Delete saved player "${savedPlayer.name}"?`);
+    const confirmed = confirm(`Delete player "${selectedPlayer.name}"?`);
 
     if (!confirmed) return;
 
-    deleteSavedPlayer(playerId);
+    if (selectedPlayer.source === "imported") {
+      deleteImportedPlayer(selectedPlayer.id);
+    } else {
+      deleteSavedPlayer(selectedPlayer.id);
+    }
   });
 
   container.appendChild(card);
@@ -1757,6 +1773,329 @@ function buildSavedTryoutPlayerText(parsed, rows) {
   return lines.join("\n");
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getNestedValue(object, path) {
+  return path.split(".").reduce((value, key) => value?.[key], object);
+}
+
+function firstDefined(object, paths) {
+  for (const path of paths) {
+    const value = getNestedValue(object, path);
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function parseTeamIdValue(value) {
+  const clean = String(value ?? "").trim();
+  return clean ? clean : "";
+}
+
+function getRankingUrl(page) {
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: String(RANKING_CONFIG.limit),
+    country: RANKING_CONFIG.country,
+    type: RANKING_CONFIG.type,
+    season: String(RANKING_CONFIG.season)
+  });
+
+  return `${CPL_PROXY_BASE}/rankings/players?${params.toString()}`;
+}
+
+async function fetchRankingPage(page) {
+  const response = await fetch(getRankingUrl(page), {
+    headers: {
+      "Accept": "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Ranking page ${page} failed with HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+function isPlayerLikeRankingEntry(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const id = firstDefined(value, ["id", "playerId", "player.id"]);
+  const teamId = firstDefined(value, ["teamId", "team.id", "teamID"]);
+
+  return id !== null && teamId !== null;
+}
+
+function extractRankingPlayers(rawData) {
+  const results = [];
+  const visited = new WeakSet();
+
+  function visit(value) {
+    if (!value || typeof value !== "object") return;
+    if (visited.has(value)) return;
+    visited.add(value);
+
+    if (Array.isArray(value)) {
+      const playerLikeEntries = value.filter(isPlayerLikeRankingEntry);
+
+      if (playerLikeEntries.length) {
+        results.push(...playerLikeEntries);
+      }
+
+      value.forEach(visit);
+      return;
+    }
+
+    if (isPlayerLikeRankingEntry(value)) {
+      results.push(value);
+    }
+
+    Object.values(value).forEach(visit);
+  }
+
+  visit(rawData);
+
+  const seen = new Set();
+  return results.filter(player => {
+    const id = String(firstDefined(player, ["id", "playerId", "player.id"]));
+    const teamId = String(firstDefined(player, ["teamId", "team.id", "teamID"]));
+    const key = `${id}:${teamId}`;
+
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function getRankingCache() {
+  try {
+    return JSON.parse(localStorage.getItem(RANKING_CACHE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function setRankingCache(players) {
+  localStorage.setItem(RANKING_CACHE_KEY, JSON.stringify({
+    timestamp: Date.now(),
+    season: RANKING_CONFIG.season,
+    country: RANKING_CONFIG.country,
+    type: RANKING_CONFIG.type,
+    limit: RANKING_CONFIG.limit,
+    players
+  }));
+}
+
+async function loadRankingDataWithCache(forceRefresh = false, onProgress = () => {}) {
+  const cached = getRankingCache();
+  const cacheMatchesConfig =
+    cached?.season === RANKING_CONFIG.season &&
+    cached?.country === RANKING_CONFIG.country &&
+    cached?.type === RANKING_CONFIG.type &&
+    cached?.limit === RANKING_CONFIG.limit;
+  const cacheIsFresh = cached?.timestamp && Date.now() - cached.timestamp < RANKING_CACHE_MAX_AGE_MS;
+
+  if (!forceRefresh && cacheMatchesConfig && cacheIsFresh && Array.isArray(cached.players)) {
+    console.info("CPL ranking data loaded from cache", { count: cached.players.length });
+    onProgress(`Using cached ranking data (${cached.players.length} players).`);
+    return {
+      source: "cache",
+      players: cached.players
+    };
+  }
+
+  const players = [];
+  let page = 1;
+
+  while (true) {
+    onProgress(`Loading ranking page ${page}...`);
+    const rawPage = await fetchRankingPage(page);
+    const pagePlayers = extractRankingPlayers(rawPage);
+
+    players.push(...pagePlayers);
+    console.info("CPL ranking page loaded", { page, count: pagePlayers.length });
+
+    if (pagePlayers.length < RANKING_CONFIG.limit) {
+      break;
+    }
+
+    page++;
+    await delay(RANKING_REQUEST_DELAY_MS);
+  }
+
+  if (!players.length) {
+    throw new Error("Ranking data loaded, but no player entries could be parsed.");
+  }
+
+  setRankingCache(players);
+  console.info("CPL ranking data loaded from API", { count: players.length });
+
+  return {
+    source: "api",
+    players
+  };
+}
+
+function findPlayerIdsByTeamId(rankingPlayers, teamId) {
+  const wantedTeamId = String(teamId);
+  const ids = new Set();
+
+  rankingPlayers.forEach(player => {
+    const playerTeamId = firstDefined(player, ["teamId", "team.id", "teamID"]);
+    const playerId = firstDefined(player, ["id", "playerId", "player.id"]);
+
+    if (String(playerTeamId) === wantedTeamId && playerId !== null) {
+      ids.add(String(playerId));
+    }
+  });
+
+  return Array.from(ids);
+}
+
+async function fetchPlayerDetails(playerId) {
+  const response = await fetch(`${CPL_PROXY_BASE}/players/${encodeURIComponent(playerId)}`, {
+    headers: {
+      "Accept": "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Player ${playerId} failed with HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+function extractPlayerDetailObject(rawData) {
+  if (!rawData || typeof rawData !== "object") return {};
+
+  if (Array.isArray(rawData.lineups) || firstDefined(rawData, ["id", "playerId"]) !== null) {
+    return rawData;
+  }
+
+  const candidates = [
+    rawData.player,
+    rawData.data,
+    rawData.data?.player,
+    rawData.result,
+    rawData.result?.player
+  ];
+
+  return candidates.find(candidate =>
+    candidate &&
+    typeof candidate === "object" &&
+    (Array.isArray(candidate.lineups) || firstDefined(candidate, ["id", "playerId"]) !== null)
+  ) || rawData;
+}
+
+function pickSkillValue(apiPlayer, skillKey, suffix) {
+  const pascalKey = skillKey.charAt(0).toUpperCase() + skillKey.slice(1);
+
+  return firstDefined(apiPlayer, [
+    `${skillKey}Skill${suffix}`,
+    `${skillKey}${suffix}`,
+    `skills.${skillKey}.${suffix.toLowerCase()}`,
+    `skills.${skillKey}.skill${suffix}`,
+    `skills.${pascalKey}.${suffix.toLowerCase()}`,
+    `skills.${pascalKey}.skill${suffix}`
+  ]);
+}
+
+function normalizeCplPlayer(apiPlayer) {
+  const id = firstDefined(apiPlayer, ["id", "playerId"]);
+  const nick = firstDefined(apiPlayer, ["nick", "nickname", "name"]);
+  const name = firstDefined(apiPlayer, ["name", "fullName", "nick", "nickname"]);
+  const lineups = Array.isArray(apiPlayer.lineups) ? apiPlayer.lineups : [];
+  const teamId = firstDefined(apiPlayer, [
+    "teamId",
+    "team.id",
+    "lineup.teamId",
+    "lineups.0.teamId",
+    "lineups.0.team.id"
+  ]);
+
+  const normalized = {
+    id: id === null ? "" : String(id),
+    name: name || nick || "Unknown Player",
+    nick: nick || name || "Unknown Player",
+    teamId: teamId === null ? "" : String(teamId),
+    age: firstDefined(apiPlayer, ["age", "playerAge"]),
+    birthday: firstDefined(apiPlayer, ["birthday", "birthDay", "birthdayDay"]),
+    totalSkill: firstDefined(apiPlayer, ["totalSkill", "skillTotal"]),
+    totalLimit: firstDefined(apiPlayer, ["totalLimit", "limitTotal"]),
+    favoriteWeapon: firstDefined(apiPlayer, ["favoriteWeapon", "weapon"]),
+    favoriteMap: firstDefined(apiPlayer, ["favoriteMap", "map"]),
+    leadershipLevel: firstDefined(apiPlayer, ["leadershipLevel", "leadership"]),
+    experienceLevel: firstDefined(apiPlayer, ["experienceLevel", "experience"]),
+    isStarter: Boolean(firstDefined(apiPlayer, ["isStarter", "starter", "lineups.0.isStarter"])),
+    specials: firstDefined(apiPlayer, ["specials"]) || [],
+    globalModifiers: firstDefined(apiPlayer, ["globalModifiers"]) || [],
+    lineups,
+    importedAt: new Date().toISOString()
+  };
+
+  [
+    "aim",
+    "handling",
+    "quickness",
+    "determination",
+    "awareness",
+    "teamplay",
+    "gamesense",
+    "movement"
+  ].forEach(skillKey => {
+    normalized[`${skillKey}SkillValue`] = pickSkillValue(apiPlayer, skillKey, "Value");
+    normalized[`${skillKey}SkillLimit`] = pickSkillValue(apiPlayer, skillKey, "Limit");
+  });
+
+  normalized.text = createPlayerTextFromImportedPlayer(normalized);
+
+  return normalized;
+}
+
+function formatImportedAge(player) {
+  if (player.age === null || player.age === undefined || player.age === "") return "";
+
+  const birthdayText = player.birthday !== null && player.birthday !== undefined && player.birthday !== ""
+    ? ` day ${player.birthday}`
+    : "";
+
+  return `${player.age}yo${birthdayText}`;
+}
+
+function createPlayerTextFromImportedPlayer(player) {
+  const lines = [
+    player.nick || player.name || "Unknown Player",
+    formatImportedAge(player)
+  ].filter(Boolean);
+
+  const skillMap = [
+    ["Aim", "aim"],
+    ["Handling", "handling"],
+    ["Quickness", "quickness"],
+    ["Determination", "determination"],
+    ["Awareness", "awareness"],
+    ["Teamplay", "teamplay"],
+    ["Gamesense", "gamesense"],
+    ["Movement", "movement"]
+  ];
+
+  skillMap.forEach(([label, key]) => {
+    const value = player[`${key}SkillValue`];
+    const limit = player[`${key}SkillLimit`];
+
+    lines.push(`${label} ${Number(value || 0)} / ${limit ?? "?"}`);
+  });
+
+  return lines.join("\n");
+}
+
 function renderTryoutAnalyzer() {
   const results = document.getElementById("tryout-results");
   if (!results) return;
@@ -2138,6 +2477,167 @@ function setupTryoutAnalyzer() {
     }
   });
 }
+function loadImportedPlayers() {
+  try {
+    return JSON.parse(localStorage.getItem(IMPORTED_PLAYERS_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveImportedPlayers(players) {
+  const existingPlayers = loadImportedPlayers();
+  const playerMap = new Map(existingPlayers.map(player => [String(player.id), player]));
+
+  players.forEach(player => {
+    if (!player.id) return;
+    playerMap.set(String(player.id), {
+      ...playerMap.get(String(player.id)),
+      ...player
+    });
+  });
+
+  const nextPlayers = Array.from(playerMap.values())
+    .sort((a, b) => String(a.nick || a.name).localeCompare(String(b.nick || b.name)));
+
+  localStorage.setItem(IMPORTED_PLAYERS_KEY, JSON.stringify(nextPlayers));
+  refreshSavedPlayerSelects();
+}
+
+function deleteImportedPlayer(playerId) {
+  const nextPlayers = loadImportedPlayers().filter(player => String(player.id) !== String(playerId));
+  localStorage.setItem(IMPORTED_PLAYERS_KEY, JSON.stringify(nextPlayers));
+  refreshSavedPlayerSelects();
+}
+
+function getSelectablePlayers() {
+  const savedPlayers = getSavedPlayers().map(player => ({
+    source: "saved",
+    value: `saved:${player.id}`,
+    id: player.id,
+    name: player.name,
+    text: player.text,
+    startGames: player.startGames,
+    heartMode: player.heartMode,
+    loyal: player.loyal,
+    fragger: player.fragger,
+    tryhard: player.tryhard
+  }));
+  const importedPlayers = loadImportedPlayers().map(player => ({
+    source: "imported",
+    value: `imported:${player.id}`,
+    id: player.id,
+    name: `${player.nick || player.name} (Team ${player.teamId || "?"})`,
+    text: player.text
+  }));
+
+  return [...savedPlayers, ...importedPlayers];
+}
+
+function setTeamImportStatus(message, type = "info") {
+  const status = document.getElementById("team-import-status");
+  if (!status) return;
+
+  status.textContent = message;
+  status.className = `team-import-status ${type ? `team-import-status-${type}` : ""}`;
+}
+
+function setTeamImportLoading(isLoading) {
+  const button = document.getElementById("load-team-button");
+  const input = document.getElementById("team-id-input");
+
+  if (button) {
+    button.disabled = isLoading;
+    button.textContent = isLoading ? "Loading..." : "Load Team";
+  }
+
+  if (input) {
+    input.disabled = isLoading;
+  }
+}
+
+async function loadTeamPlayers() {
+  const teamInput = document.getElementById("team-id-input");
+  const teamId = parseTeamIdValue(teamInput?.value);
+
+  if (!teamId || !/^\d+$/.test(teamId)) {
+    setTeamImportStatus("Please enter a valid numeric Team ID.", "error");
+    return;
+  }
+
+  setTeamImportLoading(true);
+  setTeamImportStatus("Loading ranking data...", "loading");
+
+  try {
+    const rankingResult = await loadRankingDataWithCache(false, message => setTeamImportStatus(message, "loading"));
+    const rankingPlayers = rankingResult.players;
+    const playerIds = findPlayerIdsByTeamId(rankingPlayers, teamId);
+
+    console.info("CPL team import ranking source", rankingResult.source);
+    console.info("CPL ranking players loaded", rankingPlayers.length);
+    console.info("CPL player IDs found for team", { teamId, playerIds });
+
+    if (!playerIds.length) {
+      setTeamImportStatus(`No ranking players found for Team ID ${teamId}.`, "error");
+      return;
+    }
+
+    const importedPlayers = [];
+    const failedPlayers = [];
+    let filteredPlayers = 0;
+
+    for (let index = 0; index < playerIds.length; index++) {
+      const playerId = playerIds[index];
+      setTeamImportStatus(`Loading player ${index + 1} of ${playerIds.length}...`, "loading");
+
+      try {
+        const apiPlayer = extractPlayerDetailObject(await fetchPlayerDetails(playerId));
+        const lineups = Array.isArray(apiPlayer.lineups) ? apiPlayer.lineups : [];
+
+        if (!lineups.length) {
+          filteredPlayers++;
+          continue;
+        }
+
+        importedPlayers.push(normalizeCplPlayer(apiPlayer));
+      } catch (error) {
+        console.warn("CPL player detail failed", { playerId, error });
+        failedPlayers.push(playerId);
+      }
+
+      if (index < playerIds.length - 1) {
+        await delay(RANKING_REQUEST_DELAY_MS);
+      }
+    }
+
+    if (!importedPlayers.length) {
+      const failureText = failedPlayers.length ? ` ${failedPlayers.length} player request(s) failed.` : "";
+      setTeamImportStatus(`No active lineup players found for Team ID ${teamId}.${failureText}`, "error");
+      return;
+    }
+
+    saveImportedPlayers(importedPlayers);
+
+    const warningText = failedPlayers.length
+      ? ` ${failedPlayers.length} player detail request(s) failed.`
+      : "";
+    const message = `Loaded ${importedPlayers.length} players from Team ID ${teamId}. Filtered out ${filteredPlayers} player(s) not in a lineup.${warningText}`;
+
+    console.info("CPL team import complete", {
+      teamId,
+      imported: importedPlayers.length,
+      filtered: filteredPlayers,
+      failed: failedPlayers.length
+    });
+    setTeamImportStatus(message, failedPlayers.length ? "warning" : "success");
+  } catch (error) {
+    console.error("CPL team import failed", error);
+    setTeamImportStatus(error?.message || "Team import failed.", "error");
+  } finally {
+    setTeamImportLoading(false);
+  }
+}
+
 const SAVED_PLAYERS_KEY = "cplLimitComparison.savedPlayers";
 
 function getSavedPlayers() {
@@ -2219,19 +2719,19 @@ function deleteSavedPlayer(playerId) {
 }
 
 function refreshSavedPlayerSelects() {
-  const savedPlayers = getSavedPlayers();
+  const selectablePlayers = getSelectablePlayers();
 
   document.querySelectorAll(".saved-player-select").forEach(select => {
     const currentValue = select.value;
 
     select.innerHTML = `
       <option value="">Saved players...</option>
-      ${savedPlayers
-        .map(player => `<option value="${escapeHtml(player.id)}">${escapeHtml(player.name)}</option>`)
+      ${selectablePlayers
+        .map(player => `<option value="${escapeHtml(player.value)}">${escapeHtml(player.name)}</option>`)
         .join("")}
     `;
 
-    if (savedPlayers.some(player => player.id === currentValue)) {
+    if (selectablePlayers.some(player => player.value === currentValue)) {
       select.value = currentValue;
     }
   });
@@ -2307,6 +2807,13 @@ document.addEventListener("DOMContentLoaded", () => {
   setupViewTabs();
   setupTryoutAnalyzer();
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
+  document.getElementById("load-team-button")?.addEventListener("click", loadTeamPlayers);
+  document.getElementById("team-id-input")?.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      loadTeamPlayers();
+    }
+  });
   document.getElementById("add-player-button")?.addEventListener("click", () => {
     createPlayerCard();
     saveAppState();
