@@ -630,6 +630,12 @@ function getProjectionPoint(player, season) {
   return player.projection.find(point => point.season === season) || null;
 }
 
+function getProjectionAverageScore(projection = []) {
+  if (!projection.length) return 0;
+
+  return projection.reduce((total, point) => total + point.effectiveLimit, 0) / projection.length;
+}
+
 function renderChart(players, weightsEnabled = false, applyAgeDecay = false, useAnalysisFeature = false) {
   const canvas = document.getElementById("comparison-chart");
   if (!canvas) return;
@@ -832,7 +838,7 @@ function renderDecisionSummary(players, selectedSkills, weights = {}, weightsEna
   const playerStats = players.map(player => {
     const start = player.projection[0];
     const end = player.projection[player.projection.length - 1];
-    const averageScore = player.projection.reduce((total, point) => total + point.effectiveLimit, 0) / player.projection.length;
+    const averageScore = getProjectionAverageScore(player.projection);
 
     return {
       player,
@@ -1037,6 +1043,8 @@ function createPlayerCard(initialData = {}) {
     if (!selectedPlayer) return;
 
     card.querySelector(".player-input").value = selectedPlayer.text;
+    card.dataset.loadedPlayerId = selectedPlayer.source === "imported" ? String(selectedPlayer.id) : "";
+    card.dataset.loadedPlayerSource = selectedPlayer.source || "";
 
     if (Number.isFinite(selectedPlayer.startGames)) {
       card.querySelector(".player-games").value = String(selectedPlayer.startGames);
@@ -1054,6 +1062,11 @@ function createPlayerCard(initialData = {}) {
     });
 
     saveAppState();
+  });
+
+  card.querySelector(".player-input").addEventListener("input", () => {
+    delete card.dataset.loadedPlayerId;
+    delete card.dataset.loadedPlayerSource;
   });
 
   card.querySelector(".delete-saved-player-button").addEventListener("click", () => {
@@ -1106,7 +1119,8 @@ function getPlayerInputs() {
       heartMode,
       loyal,
       fragger,
-      tryhard
+      tryhard,
+      cplPlayerId: card.dataset.loadedPlayerId || ""
     };
   });
 }
@@ -1170,6 +1184,7 @@ function runComparison() {
         loyal: playerInput.loyal,
         fragger: playerInput.fragger,
         tryhard: playerInput.tryhard,
+        cplPlayerId: playerInput.cplPlayerId,
         projection
       };
     })
@@ -2588,18 +2603,58 @@ function getCplPlayerUrl(player) {
   return `https://www.cplmanager.com/cpl/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}`;
 }
 
-function getComparableProjectionPoint(player, seasonCount) {
-  return getProjectionPoint(player, seasonCount) || player.projection[player.projection.length - 1] || null;
-}
-
-function getWeakestComparedPlayerAtSeason(comparedPlayers, seasonCount) {
+function getWeakestComparedPlayerByAverage(comparedPlayers) {
   return comparedPlayers
     .map(player => {
-      const point = getComparableProjectionPoint(player, seasonCount);
-      return point ? { player, point, value: point.effectiveLimit } : null;
+      const averageScore = getProjectionAverageScore(player.projection);
+
+      return player.projection?.length
+        ? { player, averageScore, value: averageScore }
+        : null;
     })
     .filter(Boolean)
     .sort((a, b) => a.value - b.value)[0] || null;
+}
+
+function normalizePlayerIdentityValue(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function getPlayerIdentityKeys(player) {
+  const keys = [];
+  const playerId = firstDefined(player, ["cplPlayerId", "id", "playerId"]);
+
+  if (playerId !== null) {
+    keys.push(`id:${String(playerId)}`);
+  }
+
+  [
+    player.playerName,
+    player.name,
+    player.nick
+  ].forEach(value => {
+    const normalized = normalizePlayerIdentityValue(value);
+    if (normalized) keys.push(`name:${normalized}`);
+  });
+
+  return keys;
+}
+
+function getComparedPlayerIdentitySet(comparedPlayers) {
+  const identities = new Set();
+
+  comparedPlayers.forEach(player => {
+    getPlayerIdentityKeys(player).forEach(key => identities.add(key));
+  });
+
+  return identities;
+}
+
+function isComparedPlayerSuggestion(player, comparedIdentities) {
+  return getPlayerIdentityKeys(player).some(key => comparedIdentities.has(key));
 }
 
 function getTopSkillLimitText(player, selectedSkills, maxItems = 3) {
@@ -2644,7 +2699,7 @@ function calculateTransferSuggestions({
     };
   }
 
-  const weakest = getWeakestComparedPlayerAtSeason(comparedPlayers, seasonCount);
+  const weakest = getWeakestComparedPlayerByAverage(comparedPlayers);
   if (!weakest) {
     return {
       weakest: null,
@@ -2663,8 +2718,10 @@ function calculateTransferSuggestions({
       }
     })
     .filter(player => player?.text);
+  const comparedIdentities = getComparedPlayerIdentitySet(comparedPlayers);
 
   const suggestions = normalizedPlayers
+    .filter(player => !isComparedPlayerSuggestion(player, comparedIdentities))
     .map(player => {
       const parsedPlayer = parsePlayerText(player.text);
       if (!parsedPlayer.skills.length) return null;
@@ -2687,16 +2744,18 @@ function calculateTransferSuggestions({
         useAnalysisFeature
       );
 
-      const finalPoint = getProjectionPoint({ projection }, seasonCount);
-      if (!finalPoint) return null;
+      if (!projection.length) return null;
 
-      const improvement = finalPoint.effectiveLimit - weakest.value;
+      const averageScore = getProjectionAverageScore(projection);
+      const finalPoint = projection[projection.length - 1];
+      const improvement = averageScore - weakest.value;
       if (improvement <= 0) return null;
 
       return {
         player,
         parsedPlayer,
         projection,
+        averageScore,
         finalPoint,
         improvement,
         improvementPercent: weakest.value > 0 ? improvement / weakest.value : 0,
@@ -2762,11 +2821,12 @@ function renderTransferSuggestions(result, context = {}) {
   }
 
   container.hidden = false;
+  const weakestEndSeason = result.weakest.player.projection[result.weakest.player.projection.length - 1]?.season ?? context.seasonCount;
 
   if (!result.suggestions.length) {
     container.innerHTML = `
       <h2>Transfer List Suggestions</h2>
-      <p class="transfer-suggestion-status">No transfer-list players beat ${escapeHtml(result.weakest.player.playerName)} at S${context.seasonCount}.</p>
+      <p class="transfer-suggestion-status">No transfer-list players beat the average target ${escapeHtml(result.weakest.player.playerName)} across S0-S${weakestEndSeason}.</p>
     `;
     return;
   }
@@ -2777,31 +2837,31 @@ function renderTransferSuggestions(result, context = {}) {
     const nick = player.nick && player.nick !== displayName ? ` (${player.nick})` : "";
     const teamText = player.teamId ? `Team ${player.teamId}` : "Free Agent";
     const totalText = `${player.totalSkill ?? "?"} / ${player.totalLimit ?? "?"}`;
-    const specialText = suggestion.specialLabels.length ? suggestion.specialLabels.join(", ") : "None";
-    const skillText = suggestion.topSkillText || "No selected limits";
+    const specialText = suggestion.specialLabels.length ? suggestion.specialLabels.join(", ") : "-";
+    const skillText = suggestion.topSkillText || "-";
 
     return `
       <article class="transfer-suggestion-card">
         <div class="transfer-suggestion-rank">#${index + 1}</div>
         <div class="transfer-suggestion-main">
           <strong>${escapeHtml(displayName)}${escapeHtml(nick)}</strong>
-          <span>${escapeHtml(teamText)} · Age ${escapeHtml(player.age ?? "?")}</span>
+          <span>${escapeHtml(teamText)} - Age ${escapeHtml(player.age ?? "?")}</span>
         </div>
         <div class="transfer-suggestion-metric">
           <span>Total</span>
           <strong>${escapeHtml(totalText)}</strong>
         </div>
         <div class="transfer-suggestion-metric">
-          <span>S${context.seasonCount}</span>
-          <strong>${suggestion.finalPoint.effectiveLimit.toFixed(2)}</strong>
+          <span>Avg S0-S${suggestion.finalPoint.season}</span>
+          <strong>${suggestion.averageScore.toFixed(2)}</strong>
         </div>
         <div class="transfer-suggestion-metric summary-positive">
-          <span>Gain</span>
+          <span>Avg gain</span>
           <strong>+${suggestion.improvement.toFixed(2)} (${(suggestion.improvementPercent * 100).toFixed(1)}%)</strong>
         </div>
         <div class="transfer-suggestion-detail">
-          <span>${escapeHtml(specialText)}</span>
-          <span>${escapeHtml(skillText)}</span>
+          <span>Specials: ${escapeHtml(specialText)}</span>
+          <span>Top limits: ${escapeHtml(skillText)}</span>
         </div>
         <div class="transfer-suggestion-actions">
           <a href="${escapeHtml(suggestion.cplUrl)}" target="_blank" rel="noopener noreferrer">Open in CPL</a>
@@ -2814,8 +2874,8 @@ function renderTransferSuggestions(result, context = {}) {
   container.innerHTML = `
     <h2>Transfer List Suggestions</h2>
     <div class="transfer-suggestion-meta">
-      <span>Weakest compared: <strong>${escapeHtml(result.weakest.player.playerName)}</strong> (${result.weakest.value.toFixed(2)})</span>
-      <span>Source: ${escapeHtml(context.source || "cache")} · ${result.normalizedPlayers.length} valid transfer players</span>
+      <span>Average target: <strong>${escapeHtml(result.weakest.player.playerName)}</strong> (${result.weakest.value.toFixed(2)}) across S0-S${weakestEndSeason}</span>
+      <span>Source: ${escapeHtml(context.source || "cache")} - ${result.normalizedPlayers.length} valid transfer players</span>
     </div>
     <div class="transfer-suggestion-list">
       ${suggestionCards}
@@ -2844,10 +2904,10 @@ async function updateTransferSuggestionsForComparison(comparedPlayers, compariso
       source: transferResult.source,
       transferPlayersFound: transferResult.players.length,
       validNormalizedPlayers: suggestionResult.normalizedPlayers.length,
-      weakestComparedPlayer: suggestionResult.weakest
+      averageTargetPlayer: suggestionResult.weakest
         ? {
             name: suggestionResult.weakest.player.playerName,
-            value: suggestionResult.weakest.value
+            averageScore: suggestionResult.weakest.value
           }
         : null,
       suggestions: suggestionResult.suggestions.length
