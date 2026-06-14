@@ -95,11 +95,12 @@ const ANALYSIS_AGE_DECAY = {
   40: -31
 };
 
-const RANKING_CACHE_KEY = "cplRankingPlayersCache_v2";
+const RANKING_CACHE_KEY = "cplRankingPlayersCache_v4";
 const IMPORTED_PLAYERS_KEY = "cplImportedPlayers_v1";
 const CPL_PROXY_BASE = "https://cpl-proxy.dissenter-cpl-tools.workers.dev";
 const RANKING_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RANKING_REQUEST_DELAY_MS = 200;
+const RANKING_FETCH_RETRY_COUNT = 4;
 const RANKING_MAX_PAGES = 100;
 const RANKING_CONFIG = {
   season: 12,
@@ -1811,17 +1812,11 @@ function getRankingUrl(page) {
 }
 
 async function fetchRankingPage(page) {
-  const response = await fetch(getRankingUrl(page), {
+  return fetchJsonWithRetry(getRankingUrl(page), {
     headers: {
       "Accept": "application/json"
     }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Ranking page ${page} failed with HTTP ${response.status}`);
-  }
-
-  return response.json();
+  }, `Ranking page ${page}`);
 }
 
 function isPlayerLikeRankingEntry(value) {
@@ -1833,7 +1828,157 @@ function isPlayerLikeRankingEntry(value) {
   return id !== null && teamId !== null;
 }
 
+async function fetchJsonWithRetry(url, options, label) {
+  let lastError = null;
+  let lastStatus = null;
+
+  for (let attempt = 1; attempt <= RANKING_FETCH_RETRY_COUNT; attempt++) {
+    try {
+      const response = await fetch(url, options);
+
+      if (response.ok) {
+        return response.json();
+      }
+
+      lastStatus = response.status;
+
+      if (response.status < 500 && response.status !== 429) {
+        break;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < RANKING_FETCH_RETRY_COUNT) {
+      await delay(RANKING_REQUEST_DELAY_MS * attempt);
+    }
+  }
+
+  if (lastStatus !== null) {
+    throw new Error(`${label} failed with HTTP ${lastStatus}`);
+  }
+
+  throw lastError || new Error(`${label} failed.`);
+}
+
+function findDevalueRankingRoot(rawData) {
+  const directNodes = Array.isArray(rawData?.nodes) ? rawData.nodes : [];
+  for (const node of directNodes) {
+    if (Array.isArray(node?.data) && node.data[0] && typeof node.data[0] === "object" && "rankingPlayers" in node.data[0]) {
+      return node.data;
+    }
+  }
+
+  const visited = new WeakSet();
+
+  function visit(value) {
+    if (!value || typeof value !== "object" || visited.has(value)) return null;
+    visited.add(value);
+
+    if (Array.isArray(value) && value[0] && typeof value[0] === "object" && "rankingPlayers" in value[0]) {
+      return value;
+    }
+
+    const children = Array.isArray(value) ? value : Object.values(value);
+    for (const child of children) {
+      const found = visit(child);
+      if (found) return found;
+    }
+
+    return null;
+  }
+
+  return visit(rawData);
+}
+
+function resolveRankingReference(root, value) {
+  return Number.isInteger(value) && value >= 0 && value < root.length ? root[value] : value;
+}
+
+function normalizeDevalueTeam(root, teamRef) {
+  const team = resolveRankingReference(root, teamRef);
+  if (!team || typeof team !== "object" || Array.isArray(team)) return null;
+
+  const id = resolveRankingReference(root, team.id);
+  const name = resolveRankingReference(root, team.name);
+
+  return {
+    id,
+    name
+  };
+}
+
+function normalizeDevalueRankingPlayer(root, playerRef) {
+  const player = resolveRankingReference(root, playerRef);
+  if (!player || typeof player !== "object" || Array.isArray(player)) return null;
+
+  const team = normalizeDevalueTeam(root, player.team);
+  const id = resolveRankingReference(root, player.id ?? player.playerId);
+  const teamId = team?.id ?? resolveRankingReference(root, player.teamId);
+
+  if (id === null || id === undefined || teamId === null || teamId === undefined) {
+    return null;
+  }
+
+  return {
+    id,
+    playerId: id,
+    name: resolveRankingReference(root, player.name),
+    nick: resolveRankingReference(root, player.nick),
+    teamId,
+    team,
+    country: resolveRankingReference(root, player.country)
+  };
+}
+
+function dedupeRankingPlayers(players) {
+  const seen = new Set();
+
+  return players.filter(player => {
+    const id = String(firstDefined(player, ["id", "playerId", "player.id"]));
+    const teamId = String(firstDefined(player, ["teamId", "team.id", "teamID"]));
+    const key = `${id}:${teamId}`;
+
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function extractDevalueRankingPlayers(rawData) {
+  const root = findDevalueRankingRoot(rawData);
+  if (!root) return null;
+
+  const rankingPlayers = resolveRankingReference(root, root[0]?.rankingPlayers);
+  if (!Array.isArray(rankingPlayers)) return [];
+
+  return dedupeRankingPlayers(
+    rankingPlayers
+      .map(playerRef => normalizeDevalueRankingPlayer(root, playerRef))
+      .filter(Boolean)
+  );
+}
+
+function extractRankingPageMetadata(rawData) {
+  const root = findDevalueRankingRoot(rawData);
+  if (!root) return {};
+
+  const metadata = root[0] || {};
+  const totalCount = Number(resolveRankingReference(root, metadata.totalCount));
+  const limit = Number(resolveRankingReference(root, metadata.limit));
+  const page = Number(resolveRankingReference(root, metadata.page));
+
+  return {
+    totalCount: Number.isFinite(totalCount) && totalCount > 0 ? totalCount : null,
+    limit: Number.isFinite(limit) && limit > 0 ? limit : null,
+    page: Number.isFinite(page) && page > 0 ? page : null
+  };
+}
+
 function extractRankingPlayers(rawData) {
+  const devaluePlayers = extractDevalueRankingPlayers(rawData);
+  if (devaluePlayers) return devaluePlayers;
+
   const results = [];
   const visited = new WeakSet();
 
@@ -1861,17 +2006,7 @@ function extractRankingPlayers(rawData) {
   }
 
   visit(rawData);
-
-  const seen = new Set();
-  return results.filter(player => {
-    const id = String(firstDefined(player, ["id", "playerId", "player.id"]));
-    const teamId = String(firstDefined(player, ["teamId", "team.id", "teamID"]));
-    const key = `${id}:${teamId}`;
-
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return dedupeRankingPlayers(results);
 }
 
 function getRankingCache() {
@@ -1914,10 +2049,22 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
   const players = [];
   const seenRankingKeys = new Set();
   let page = 1;
+  let totalPages = null;
 
   while (page <= RANKING_MAX_PAGES) {
-    onProgress(`Loading ranking page ${page}...`);
+    const progressText = totalPages
+      ? `Loading ranking page ${page} of ${totalPages}...`
+      : `Loading ranking page ${page}...`;
+    onProgress(progressText);
+
     const rawPage = await fetchRankingPage(page);
+    const metadata = extractRankingPageMetadata(rawPage);
+
+    if (!totalPages && metadata.totalCount) {
+      const pageLimit = metadata.limit || RANKING_CONFIG.limit;
+      totalPages = Math.min(RANKING_MAX_PAGES, Math.ceil(metadata.totalCount / pageLimit));
+    }
+
     const pagePlayers = extractRankingPlayers(rawPage);
     const newPagePlayers = pagePlayers.filter(player => {
       const id = String(firstDefined(player, ["id", "playerId", "player.id"]));
@@ -1934,10 +2081,15 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
       page,
       count: pagePlayers.length,
       newCount: newPagePlayers.length,
+      totalPages,
       total: players.length
     });
 
-    if (pagePlayers.length === 0 || newPagePlayers.length === 0) {
+    if (totalPages && page >= totalPages) {
+      break;
+    }
+
+    if (pagePlayers.length === 0 || (!totalPages && newPagePlayers.length === 0)) {
       break;
     }
 
@@ -1979,17 +2131,11 @@ function findPlayerIdsByTeamId(rankingPlayers, teamId) {
 }
 
 async function fetchPlayerDetails(playerId) {
-  const response = await fetch(`${CPL_PROXY_BASE}/players/${encodeURIComponent(playerId)}`, {
+  return fetchJsonWithRetry(`${CPL_PROXY_BASE}/players/${encodeURIComponent(playerId)}`, {
     headers: {
       "Accept": "application/json"
     }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Player ${playerId} failed with HTTP ${response.status}`);
-  }
-
-  return response.json();
+  }, `Player ${playerId}`);
 }
 
 function extractPlayerDetailObject(rawData) {
