@@ -95,11 +95,12 @@ const ANALYSIS_AGE_DECAY = {
   40: -31
 };
 
-const RANKING_CACHE_KEY = "cplRankingPlayersCache_v1";
+const RANKING_CACHE_KEY = "cplRankingPlayersCache_v2";
 const IMPORTED_PLAYERS_KEY = "cplImportedPlayers_v1";
 const CPL_PROXY_BASE = "https://cpl-proxy.dissenter-cpl-tools.workers.dev";
 const RANKING_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RANKING_REQUEST_DELAY_MS = 200;
+const RANKING_MAX_PAGES = 100;
 const RANKING_CONFIG = {
   season: 12,
   country: "All countries",
@@ -1911,22 +1912,41 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
   }
 
   const players = [];
+  const seenRankingKeys = new Set();
   let page = 1;
 
-  while (true) {
+  while (page <= RANKING_MAX_PAGES) {
     onProgress(`Loading ranking page ${page}...`);
     const rawPage = await fetchRankingPage(page);
     const pagePlayers = extractRankingPlayers(rawPage);
+    const newPagePlayers = pagePlayers.filter(player => {
+      const id = String(firstDefined(player, ["id", "playerId", "player.id"]));
+      const teamId = String(firstDefined(player, ["teamId", "team.id", "teamID"]));
+      const key = `${id}:${teamId}`;
 
-    players.push(...pagePlayers);
-    console.info("CPL ranking page loaded", { page, count: pagePlayers.length });
+      if (seenRankingKeys.has(key)) return false;
+      seenRankingKeys.add(key);
+      return true;
+    });
 
-    if (pagePlayers.length < RANKING_CONFIG.limit) {
+    players.push(...newPagePlayers);
+    console.info("CPL ranking page loaded", {
+      page,
+      count: pagePlayers.length,
+      newCount: newPagePlayers.length,
+      total: players.length
+    });
+
+    if (pagePlayers.length === 0 || newPagePlayers.length === 0) {
       break;
     }
 
     page++;
     await delay(RANKING_REQUEST_DELAY_MS);
+  }
+
+  if (page > RANKING_MAX_PAGES) {
+    console.warn("CPL ranking loading stopped at safety page limit", { limit: RANKING_MAX_PAGES });
   }
 
   if (!players.length) {
