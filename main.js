@@ -103,6 +103,14 @@ const RANKING_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RANKING_REQUEST_DELAY_MS = 200;
 const CPL_FETCH_RETRY_COUNT = 4;
 const RANKING_MAX_PAGES = 100;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const CPL_TIME_ZONE = "Europe/Berlin";
+const CPL_DAILY_UPDATE_HOUR = 2;
+const CPL_SEASON_ANCHOR = {
+  season: 12,
+  seasonDay: 28,
+  gameDateUtc: Date.UTC(2026, 5, 14)
+};
 const RANKING_CONFIG = {
   season: 12,
   country: "All countries",
@@ -114,6 +122,14 @@ const TRANSFER_LIST_CONFIG = {
   limit: 5000
 };
 const TRANSFER_SUGGESTION_LIMIT = 10;
+const OFFICIAL_GAME_MATCH_TYPES = new Set([
+  "amateur",
+  "eos",
+  "cup",
+  "ladder",
+  "league",
+  "official"
+]);
 
 const transferSuggestionState = {
   requestId: 0,
@@ -158,6 +174,74 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function positiveModulo(value, divisor) {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function getBerlinDateTimeParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: CPL_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  });
+  const parts = {};
+
+  formatter.formatToParts(date).forEach(part => {
+    if (part.type !== "literal") {
+      parts[part.type] = Number(part.value);
+    }
+  });
+
+  return parts;
+}
+
+function getCplGameDateUtc(date = new Date()) {
+  const parts = getBerlinDateTimeParts(date);
+  let gameDateUtc = Date.UTC(parts.year, parts.month - 1, parts.day);
+
+  if (parts.hour < CPL_DAILY_UPDATE_HOUR) {
+    gameDateUtc -= MS_PER_DAY;
+  }
+
+  return gameDateUtc;
+}
+
+function getCurrentCplSeasonState(date = new Date()) {
+  const dayDiff = Math.floor((getCplGameDateUtc(date) - CPL_SEASON_ANCHOR.gameDateUtc) / MS_PER_DAY);
+  const anchorDayIndex = CPL_SEASON_ANCHOR.seasonDay - 1;
+  const absoluteSeasonDayIndex = anchorDayIndex + dayDiff;
+  const seasonOffset = Math.floor(absoluteSeasonDayIndex / CPL_SEASON_DAYS);
+  const seasonDay = positiveModulo(absoluteSeasonDayIndex, CPL_SEASON_DAYS) + 1;
+  const season = CPL_SEASON_ANCHOR.season + seasonOffset;
+
+  return {
+    season,
+    seasonDay,
+    label: `S${season}`,
+    fullLabel: `S${season} D${seasonDay}`
+  };
+}
+
+function getProjectionSeasonState(seasonOffset, baseState = getCurrentCplSeasonState()) {
+  const season = baseState.season + seasonOffset;
+
+  return {
+    season,
+    seasonDay: baseState.seasonDay,
+    label: `S${season}`,
+    fullLabel: `S${season} D${baseState.seasonDay}`
+  };
+}
+
+function getProjectionPointLabel(point) {
+  return point?.cplSeasonLabel || `S${point?.season ?? 0}`;
 }
 
 function normalizeSkillName(value) {
@@ -540,7 +624,8 @@ function buildProjection(
   weightsEnabled = false,
   abilities = {},
   applyAgeDecay = false,
-  useAnalysisFeature = false
+  useAnalysisFeature = false,
+  baseSeasonState = getCurrentCplSeasonState()
 ) {
   const baseLimit = getSelectedLimitAverage(player, selectedSkills, weights, weightsEnabled, abilities);
   const result = [];
@@ -556,9 +641,14 @@ function buildProjection(
     const ageDecay = getAgeDecayDetails(player, season, applyAgeDecay, useAnalysisFeature);
     const maxAgeReached = ageDecay.age === MAX_PLAYER_AGE;
     const effectiveLimit = scoreBeforeDecay * (1 - ageDecay.decayPercent);
+    const cplSeasonState = getProjectionSeasonState(season, baseSeasonState);
 
     result.push({
       season,
+      cplSeason: cplSeasonState.season,
+      cplSeasonDay: cplSeasonState.seasonDay,
+      cplSeasonLabel: cplSeasonState.label,
+      cplSeasonFullLabel: cplSeasonState.fullLabel,
       games,
       baseLimit,
       heartBonus,
@@ -581,6 +671,7 @@ function getBestPlayerAtSeason(players, seasonIndex) {
       return point
         ? {
             player,
+            point,
             value: point.effectiveLimit
           }
         : null;
@@ -608,6 +699,7 @@ function getLeaderChanges(players) {
     if (leader.player.playerName !== previousLeader) {
       changes.push({
         season,
+        label: getProjectionPointLabel(leader.point),
         playerName: leader.player.playerName,
         value: leader.value
       });
@@ -647,7 +739,13 @@ function renderChart(players, weightsEnabled = false, applyAgeDecay = false, use
   }
 
   const lastSeason = getLastProjectionSeason(players);
-  const labels = Array.from({ length: lastSeason + 1 }, (_, season) => `S${season}`);
+  const labels = Array.from({ length: lastSeason + 1 }, (_, season) => {
+    const point = players
+      .map(player => getProjectionPoint(player, season))
+      .find(Boolean);
+
+    return point ? getProjectionPointLabel(point) : getProjectionSeasonState(season).label;
+  });
 
   comparisonChart = new Chart(ctx, {
     type: "line",
@@ -706,6 +804,7 @@ function renderChart(players, weightsEnabled = false, applyAgeDecay = false, use
                 if (!point) return [];
 
                 return [
+                `CPL season: ${point.cplSeasonFullLabel || getProjectionPointLabel(point)}`,
                 `Games: ${point.games}`,
                 `Age: ${getAgeAtSeason(player.playerAge, point.season)}`,
                 point.maxAgeReached ? "Max age reached: line ends here" : null,
@@ -726,7 +825,7 @@ function renderChart(players, weightsEnabled = false, applyAgeDecay = false, use
         x: {
           title: {
             display: true,
-            text: "Seasons"
+            text: "CPL seasons"
           }
         },
         y: {
@@ -770,7 +869,7 @@ function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = f
         <br>
         ${weightsEnabled ? "Base Weighted Score" : "Base Limit"}: ${start.baseLimit.toFixed(2)}
         <br>
-        Projection: S${start.season} to S${end.season}${end.maxAgeReached ? " (max age 40 reached)" : ""}
+        Projection: ${getProjectionPointLabel(start)} to ${getProjectionPointLabel(end)}${end.maxAgeReached ? " (max age 40 reached)" : ""}
         <br>
         Age decay: ${applyAgeDecay ? `${end.ageDecay.absoluteDecay} total skill at end (${(end.ageDecay.decayPercent * 100).toFixed(2)}%)` : "Off"}
         <br>
@@ -791,7 +890,7 @@ function renderSummary(players, selectedSkills, weights = {}, weightsEnabled = f
 
   const leaderChangeText = leaderChanges.length
     ? leaderChanges
-        .map(change => `S${change.season}: ${escapeHtml(change.playerName)} takes the lead with ${change.value.toFixed(2)}`)
+        .map(change => `${escapeHtml(change.label || `S${change.season}`)}: ${escapeHtml(change.playerName)} takes the lead with ${change.value.toFixed(2)}`)
         .join("<br>")
     : "No lead changes in the selected timeframe.";
 
@@ -834,6 +933,8 @@ function renderDecisionSummary(players, selectedSkills, weights = {}, weightsEna
   const winnerAtStart = getBestPlayerAtSeason(players, 0);
   const winnerAtEnd = getBestPlayerAtSeason(players, lastSeason);
   const leaderChanges = getLeaderChanges(players);
+  const summaryStartLabel = getProjectionPointLabel(winnerAtStart?.point || players[0]?.projection?.[0]);
+  const summaryEndLabel = getProjectionPointLabel(winnerAtEnd?.point || players[0]?.projection?.[players[0]?.projection?.length - 1]);
 
   const playerStats = players.map(player => {
     const start = player.projection[0];
@@ -863,15 +964,15 @@ function renderDecisionSummary(players, selectedSkills, weights = {}, weightsEna
 
   const leaderChangeText = leaderChanges.length
     ? leaderChanges
-        .map(change => `S${change.season}: ${escapeHtml(change.playerName)} takes the lead with ${change.value.toFixed(2)}`)
+        .map(change => `${escapeHtml(change.label || `S${change.season}`)}: ${escapeHtml(change.playerName)} takes the lead with ${change.value.toFixed(2)}`)
         .join("<br>")
     : "No leader changes in the selected timeframe.";
 
   const rankingRows = ranking.map((item, index) => {
     const projectionEndText = item.end.maxAgeReached
-      ? `S${item.end.season} (age 40)`
-      : `S${item.end.season}`;
-    const averageRangeText = `S${item.start.season}-S${item.end.season}`;
+      ? `${getProjectionPointLabel(item.end)} (age 40)`
+      : getProjectionPointLabel(item.end);
+    const averageRangeText = `${getProjectionPointLabel(item.start)}-${getProjectionPointLabel(item.end)}`;
     const missingText = item.missingLimits.length
       ? `<span class="summary-warning">Missing: ${escapeHtml(item.missingLimits.join(", "))}</span>`
       : "";
@@ -905,12 +1006,12 @@ function renderDecisionSummary(players, selectedSkills, weights = {}, weightsEna
       <div class="summary-decision summary-best">
         <span>Best choice</span>
         <strong>${escapeHtml(best.player.playerName || "Unknown Player")}</strong>
-        <small>Avg ${best.averageScore.toFixed(2)} across S${best.start.season}-S${best.end.season}</small>
+        <small>Avg ${best.averageScore.toFixed(2)} across ${getProjectionPointLabel(best.start)}-${getProjectionPointLabel(best.end)}</small>
       </div>
       <div class="summary-decision summary-worst">
         <span>Weakest choice</span>
         <strong>${escapeHtml(worst.player.playerName || "Unknown Player")}</strong>
-        <small>Avg ${worst.averageScore.toFixed(2)} across S${worst.start.season}-S${worst.end.season}</small>
+        <small>Avg ${worst.averageScore.toFixed(2)} across ${getProjectionPointLabel(worst.start)}-${getProjectionPointLabel(worst.end)}</small>
       </div>
     </div>
 
@@ -935,9 +1036,9 @@ function renderDecisionSummary(players, selectedSkills, weights = {}, weightsEna
 
     <div class="summary-note">
       <strong>Settings:</strong>
-      ${escapeHtml(selectedSkills.join(", "))} | ${modeText} | Age decay: ${ageDecayText} | S0 to S${lastSeason}
+      ${escapeHtml(selectedSkills.join(", "))} | ${modeText} | Age decay: ${ageDecayText} | ${escapeHtml(summaryStartLabel)} to ${escapeHtml(summaryEndLabel)}
       <br>
-      <strong>Decision metric:</strong> Avg is calculated across the visible projection points, including S0.
+      <strong>Decision metric:</strong> Avg is calculated across the visible projection points, including the current season.
     </div>
     ${weightText}
 
@@ -1012,8 +1113,8 @@ function createPlayerCard(initialData = {}) {
   card.querySelector(".remove-player-button").addEventListener("click", () => {
     const playerCards = document.querySelectorAll(".player-panel");
 
-    if (playerCards.length <= 2) {
-      alert("At least two players are required.");
+    if (playerCards.length <= 1) {
+      alert("At least one player is required.");
       return;
     }
 
@@ -1128,9 +1229,9 @@ function getPlayerInputs() {
 function runComparison() {
   const playerInputs = getPlayerInputs();
 
-  if (playerInputs.length < 2) {
+  if (playerInputs.length < 1) {
     clearTransferSuggestions();
-    alert("Please add at least two players.");
+    alert("Please add at least one player.");
     return;
   }
 
@@ -1147,6 +1248,7 @@ function runComparison() {
 
   const gamesPerSeason = Number(document.getElementById("games-per-season")?.value) || 57;
   const seasonCount = Number(document.getElementById("season-count")?.value) || 15;
+  const baseSeasonState = getCurrentCplSeasonState();
 
   const parsedPlayers = playerInputs
     .map(playerInput => {
@@ -1172,7 +1274,8 @@ function runComparison() {
         weightsEnabled,
         abilities,
         applyAgeDecay,
-        useAnalysisFeature
+        useAnalysisFeature,
+        baseSeasonState
       );
 
       if (!projection.length) return null;
@@ -1190,9 +1293,9 @@ function runComparison() {
     })
     .filter(Boolean);
 
-  if (parsedPlayers.length < 2) {
+  if (parsedPlayers.length < 1) {
     clearTransferSuggestions();
-    alert("Please paste at least two valid players.");
+    alert("Please paste at least one valid player.");
     return;
   }
 
@@ -1205,7 +1308,8 @@ function runComparison() {
     weights,
     weightsEnabled,
     applyAgeDecay,
-    useAnalysisFeature
+    useAnalysisFeature,
+    baseSeasonState
   });
   saveAppState();
 }
@@ -1238,12 +1342,12 @@ function getTryoutEstimationMode() {
 
 function getTryoutCurrentSeasonDay() {
   const input = document.getElementById("tryout-current-season-day");
-  const rawText = input?.value ?? "1";
-  const rawValue = parseIntegerInput(rawText, 1);
-  const value = Math.min(CPL_SEASON_DAYS, Math.max(1, rawValue));
+  const currentSeasonState = getCurrentCplSeasonState();
+  const value = currentSeasonState.seasonDay;
 
-  if (input && rawText !== "" && rawValue !== value) {
+  if (input) {
     input.value = String(value);
+    input.title = currentSeasonState.fullLabel;
   }
 
   return value;
@@ -2176,6 +2280,69 @@ async function fetchPlayerDetails(playerId) {
   }, `Player ${playerId}`);
 }
 
+async function fetchPlayerStats(playerId) {
+  return fetchJsonWithRetry(`${CPL_PROXY_BASE}/players/${encodeURIComponent(playerId)}/stats`, {
+    headers: {
+      "Accept": "application/json"
+    }
+  }, `Player ${playerId} stats`);
+}
+
+function normalizeMatchType(value) {
+  if (value && typeof value === "object") {
+    return normalizeMatchType(
+      value.name ??
+      value.type ??
+      value.key ??
+      value.slug ??
+      value.code ??
+      ""
+    );
+  }
+
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function extractOfficialGamesFromStats(rawStats) {
+  let games = 0;
+  const visited = new WeakSet();
+
+  function visit(value) {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    const matchType = normalizeMatchType(firstDefined(value, [
+      "matchType",
+      "match_type",
+      "type",
+      "competitionType",
+      "competition.type",
+      "competition.matchType"
+    ]));
+    const gameCount = Number(firstDefined(value, [
+      "games",
+      "gameCount",
+      "matches",
+      "matchCount"
+    ]));
+
+    if (OFFICIAL_GAME_MATCH_TYPES.has(matchType) && Number.isFinite(gameCount)) {
+      games += gameCount;
+    }
+
+    Object.values(value).forEach(visit);
+  }
+
+  visit(rawStats);
+
+  return Math.max(0, Math.round(games));
+}
+
 function extractPlayerDetailObject(rawData) {
   if (!rawData || typeof rawData !== "object") return {};
 
@@ -2211,11 +2378,38 @@ function pickSkillValue(apiPlayer, skillKey, suffix) {
   ]);
 }
 
+function normalizeSpecialName(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+}
+
+function getPlayerSpecialNames(player) {
+  return getNamedItemNames(player, "specials")
+    .map(normalizeSpecialName)
+    .filter(Boolean);
+}
+
+function hasSpecialAbility(player, abilityName) {
+  const normalizedAbility = normalizeSpecialName(abilityName);
+  return getPlayerSpecialNames(player).some(name => name === normalizedAbility);
+}
+
+function getPlayerAbilitiesFromSpecials(player) {
+  return {
+    loyal: hasSpecialAbility(player, "loyal"),
+    fragger: hasSpecialAbility(player, "fragger"),
+    tryhard: hasSpecialAbility(player, "tryhard")
+  };
+}
+
 function normalizeCplPlayer(apiPlayer) {
   const id = firstDefined(apiPlayer, ["id", "playerId"]);
   const nick = firstDefined(apiPlayer, ["nick", "nickname", "name"]);
   const name = firstDefined(apiPlayer, ["name", "fullName", "nick", "nickname"]);
   const lineups = Array.isArray(apiPlayer.lineups) ? apiPlayer.lineups : [];
+  const abilities = getPlayerAbilitiesFromSpecials(apiPlayer);
   const teamId = firstDefined(apiPlayer, [
     "teamId",
     "team.id",
@@ -2240,6 +2434,9 @@ function normalizeCplPlayer(apiPlayer) {
     isStarter: Boolean(firstDefined(apiPlayer, ["isStarter", "starter", "lineups.0.isStarter"])),
     specials: firstDefined(apiPlayer, ["specials"]) || [],
     globalModifiers: firstDefined(apiPlayer, ["globalModifiers"]) || [],
+    loyal: abilities.loyal,
+    fragger: abilities.fragger,
+    tryhard: abilities.tryhard,
     lineups,
     importedAt: new Date().toISOString()
   };
@@ -2257,6 +2454,11 @@ function normalizeCplPlayer(apiPlayer) {
     normalized[`${skillKey}SkillValue`] = pickSkillValue(apiPlayer, skillKey, "Value");
     normalized[`${skillKey}SkillLimit`] = pickSkillValue(apiPlayer, skillKey, "Limit");
   });
+
+  const startGames = firstDefined(apiPlayer, ["startGames", "officialGames"]);
+  if (startGames !== null && Number.isFinite(Number(startGames))) {
+    normalized.startGames = Math.max(0, Math.round(Number(startGames)));
+  }
 
   normalized.text = createPlayerTextFromImportedPlayer(normalized);
 
@@ -2347,13 +2549,13 @@ async function loadTransferListWithCache(forceRefresh = false) {
 
   if (!forceRefresh && cacheMatchesConfig && cacheIsFresh && cached.transfers) {
     const players = extractTransferPlayers(cached.transfers);
-    console.info("CPL transfer list loaded from cache", {
+    console.info("CPL transfer list loaded from localStorage", {
       rawCount: getTransferRawCount(cached.transfers),
       playerCount: players.length
     });
 
     return {
-      source: "cache",
+      source: "localStorage",
       rawData: cached.transfers,
       players
     };
@@ -2362,13 +2564,13 @@ async function loadTransferListWithCache(forceRefresh = false) {
   const rawData = await fetchTransferList();
   setTransferListCache(rawData);
   const players = extractTransferPlayers(rawData);
-  console.info("CPL transfer list loaded from API", {
+  console.info("CPL transfer list loaded from proxy", {
     rawCount: getTransferRawCount(rawData),
     playerCount: players.length
   });
 
   return {
-    source: "api",
+    source: "proxy",
     rawData,
     players
   };
@@ -2465,17 +2667,25 @@ function getNamedItemNames(player, fieldName) {
   if (!Array.isArray(items)) return [];
 
   return items
-    .map(item => String(item?.name ?? item ?? "").trim().toLowerCase())
+    .map(item => String(
+      item?.name ??
+      item?.title ??
+      item?.label ??
+      item?.slug ??
+      item?.key ??
+      item?.code ??
+      item ??
+      ""
+    ).trim().toLowerCase())
     .filter(Boolean);
 }
 
 function getTransferSpecialNames(player) {
-  return getNamedItemNames(player, "specials");
+  return getPlayerSpecialNames(player);
 }
 
 function hasTransferAbility(player, abilityName) {
-  const normalizedAbility = abilityName.toLowerCase();
-  return getTransferSpecialNames(player).some(name => name === normalizedAbility);
+  return hasSpecialAbility(player, abilityName);
 }
 
 function getTransferPlayerAbilities(player) {
@@ -2689,6 +2899,7 @@ function calculateTransferSuggestions({
   weightsEnabled,
   applyAgeDecay,
   useAnalysisFeature,
+  baseSeasonState,
   limit = TRANSFER_SUGGESTION_LIMIT
 }) {
   if (!Array.isArray(comparedPlayers) || comparedPlayers.length < 1) {
@@ -2741,7 +2952,8 @@ function calculateTransferSuggestions({
           tryhard: !!player.tryhard
         },
         applyAgeDecay,
-        useAnalysisFeature
+        useAnalysisFeature,
+        baseSeasonState
       );
 
       if (!projection.length) return null;
@@ -2821,12 +3033,15 @@ function renderTransferSuggestions(result, context = {}) {
   }
 
   container.hidden = false;
-  const weakestEndSeason = result.weakest.player.projection[result.weakest.player.projection.length - 1]?.season ?? context.seasonCount;
+  const weakestStartPoint = result.weakest.player.projection[0];
+  const weakestEndPoint = result.weakest.player.projection[result.weakest.player.projection.length - 1];
+  const weakestRangeLabel = `${getProjectionPointLabel(weakestStartPoint)}-${getProjectionPointLabel(weakestEndPoint)}`;
 
   if (!result.suggestions.length) {
     container.innerHTML = `
       <h2>Transfer List Suggestions</h2>
-      <p class="transfer-suggestion-status">No transfer-list players beat the average target ${escapeHtml(result.weakest.player.playerName)} across S0-S${weakestEndSeason}.</p>
+      <p class="transfer-suggestion-status">No better transfer-list players found for the current settings.</p>
+      <p class="transfer-suggestion-status">Average target: ${escapeHtml(result.weakest.player.playerName)} across ${escapeHtml(weakestRangeLabel)}.</p>
     `;
     return;
   }
@@ -2839,6 +3054,7 @@ function renderTransferSuggestions(result, context = {}) {
     const totalText = `${player.totalSkill ?? "?"} / ${player.totalLimit ?? "?"}`;
     const specialText = suggestion.specialLabels.length ? suggestion.specialLabels.join(", ") : "-";
     const skillText = suggestion.topSkillText || "-";
+    const suggestionRangeLabel = `${getProjectionPointLabel(suggestion.projection[0])}-${getProjectionPointLabel(suggestion.finalPoint)}`;
 
     return `
       <article class="transfer-suggestion-card">
@@ -2852,7 +3068,7 @@ function renderTransferSuggestions(result, context = {}) {
           <strong>${escapeHtml(totalText)}</strong>
         </div>
         <div class="transfer-suggestion-metric">
-          <span>Avg S0-S${suggestion.finalPoint.season}</span>
+          <span>Avg ${escapeHtml(suggestionRangeLabel)}</span>
           <strong>${suggestion.averageScore.toFixed(2)}</strong>
         </div>
         <div class="transfer-suggestion-metric summary-positive">
@@ -2874,8 +3090,8 @@ function renderTransferSuggestions(result, context = {}) {
   container.innerHTML = `
     <h2>Transfer List Suggestions</h2>
     <div class="transfer-suggestion-meta">
-      <span>Average target: <strong>${escapeHtml(result.weakest.player.playerName)}</strong> (${result.weakest.value.toFixed(2)}) across S0-S${weakestEndSeason}</span>
-      <span>Source: ${escapeHtml(context.source || "cache")} - ${result.normalizedPlayers.length} valid transfer players</span>
+      <span>Average target: <strong>${escapeHtml(result.weakest.player.playerName)}</strong> (${result.weakest.value.toFixed(2)}) across ${escapeHtml(weakestRangeLabel)}</span>
+      <span>Source: ${escapeHtml(context.source || "localStorage")} - ${result.normalizedPlayers.length} valid transfer players</span>
     </div>
     <div class="transfer-suggestion-list">
       ${suggestionCards}
@@ -2904,7 +3120,7 @@ async function updateTransferSuggestionsForComparison(comparedPlayers, compariso
       source: transferResult.source,
       transferPlayersFound: transferResult.players.length,
       validNormalizedPlayers: suggestionResult.normalizedPlayers.length,
-      averageTargetPlayer: suggestionResult.weakest
+      weakestComparedPlayer: suggestionResult.weakest
         ? {
             name: suggestionResult.weakest.player.playerName,
             averageScore: suggestionResult.weakest.value
@@ -3442,11 +3658,12 @@ async function loadTeamPlayers() {
 
     const importedPlayers = [];
     const failedPlayers = [];
+    const failedStatsPlayers = [];
     let filteredPlayers = 0;
 
     for (let index = 0; index < playerIds.length; index++) {
       const playerId = playerIds[index];
-      setTeamImportStatus(`Loading player ${index + 1} of ${playerIds.length}...`, "loading");
+      setTeamImportStatus(`Loading player ${index + 1} of ${playerIds.length} details...`, "loading");
 
       try {
         const apiPlayer = extractPlayerDetailObject(await fetchPlayerDetails(playerId));
@@ -3457,7 +3674,17 @@ async function loadTeamPlayers() {
           continue;
         }
 
-        importedPlayers.push(normalizeCplPlayer(apiPlayer));
+        const normalizedPlayer = normalizeCplPlayer(apiPlayer);
+
+        try {
+          setTeamImportStatus(`Loading player ${index + 1} of ${playerIds.length} stats...`, "loading");
+          normalizedPlayer.startGames = extractOfficialGamesFromStats(await fetchPlayerStats(playerId));
+        } catch (statsError) {
+          console.warn("CPL player stats failed", { playerId, error: statsError });
+          failedStatsPlayers.push(playerId);
+        }
+
+        importedPlayers.push(normalizedPlayer);
       } catch (error) {
         console.warn("CPL player detail failed", { playerId, error });
         failedPlayers.push(playerId);
@@ -3479,15 +3706,19 @@ async function loadTeamPlayers() {
     const warningText = failedPlayers.length
       ? ` ${failedPlayers.length} player detail request(s) failed.`
       : "";
-    const message = `Loaded ${importedPlayers.length} players from Team ID ${teamId}. Filtered out ${filteredPlayers} player(s) not in a lineup.${warningText}`;
+    const statsWarningText = failedStatsPlayers.length
+      ? ` ${failedStatsPlayers.length} stats request(s) failed; those start games were not updated.`
+      : "";
+    const message = `Loaded ${importedPlayers.length} players from Team ID ${teamId}. Filtered out ${filteredPlayers} player(s) not in a lineup.${warningText}${statsWarningText}`;
 
     console.info("CPL team import complete", {
       teamId,
       imported: importedPlayers.length,
       filtered: filteredPlayers,
-      failed: failedPlayers.length
+      failed: failedPlayers.length,
+      statsFailed: failedStatsPlayers.length
     });
-    setTeamImportStatus(message, failedPlayers.length ? "warning" : "success");
+    setTeamImportStatus(message, failedPlayers.length || failedStatsPlayers.length ? "warning" : "success");
   } catch (error) {
     console.error("CPL team import failed", error);
     setTeamImportStatus(error?.message || "Team import failed.", "error");
@@ -3600,7 +3831,7 @@ function getTryoutAnalyzerState() {
   return {
     inputText: document.getElementById("tryout-input")?.value || "",
     estimationMode: document.getElementById("tryout-estimation-mode")?.value || "average",
-    currentSeasonDay: document.getElementById("tryout-current-season-day")?.value || "1",
+    currentSeasonDay: String(getTryoutCurrentSeasonDay()),
     leaderIcon: isTryoutLeaderIconChecked(),
     manualOverrides: { ...tryoutState.manualOverrides },
     extraBySkill: { ...tryoutState.extraBySkill }
@@ -3616,7 +3847,7 @@ function applyTryoutAnalyzerState(state = {}) {
 
   if (input) input.value = inputText;
   if (mode) mode.value = state.estimationMode || "average";
-  if (currentSeasonDay) currentSeasonDay.value = state.currentSeasonDay || "1";
+  if (currentSeasonDay) currentSeasonDay.value = String(getCurrentCplSeasonState().seasonDay);
   if (leaderIcon) leaderIcon.checked = !!state.leaderIcon;
 
   tryoutState.manualOverrides = state.manualOverrides && typeof state.manualOverrides === "object"
