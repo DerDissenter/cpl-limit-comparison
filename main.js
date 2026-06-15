@@ -122,14 +122,6 @@ const TRANSFER_LIST_CONFIG = {
   limit: 5000
 };
 const TRANSFER_SUGGESTION_LIMIT = 10;
-const OFFICIAL_GAME_MATCH_TYPES = new Set([
-  "amateur",
-  "eos",
-  "cup",
-  "ladder",
-  "league",
-  "official"
-]);
 
 const transferSuggestionState = {
   requestId: 0,
@@ -2280,69 +2272,6 @@ async function fetchPlayerDetails(playerId) {
   }, `Player ${playerId}`);
 }
 
-async function fetchPlayerStats(playerId) {
-  return fetchJsonWithRetry(`${CPL_PROXY_BASE}/players/${encodeURIComponent(playerId)}/stats`, {
-    headers: {
-      "Accept": "application/json"
-    }
-  }, `Player ${playerId} stats`);
-}
-
-function normalizeMatchType(value) {
-  if (value && typeof value === "object") {
-    return normalizeMatchType(
-      value.name ??
-      value.type ??
-      value.key ??
-      value.slug ??
-      value.code ??
-      ""
-    );
-  }
-
-  return String(value ?? "").trim().toLowerCase();
-}
-
-function extractOfficialGamesFromStats(rawStats) {
-  let games = 0;
-  const visited = new WeakSet();
-
-  function visit(value) {
-    if (!value || typeof value !== "object" || visited.has(value)) return;
-    visited.add(value);
-
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-      return;
-    }
-
-    const matchType = normalizeMatchType(firstDefined(value, [
-      "matchType",
-      "match_type",
-      "type",
-      "competitionType",
-      "competition.type",
-      "competition.matchType"
-    ]));
-    const gameCount = Number(firstDefined(value, [
-      "games",
-      "gameCount",
-      "matches",
-      "matchCount"
-    ]));
-
-    if (OFFICIAL_GAME_MATCH_TYPES.has(matchType) && Number.isFinite(gameCount)) {
-      games += gameCount;
-    }
-
-    Object.values(value).forEach(visit);
-  }
-
-  visit(rawStats);
-
-  return Math.max(0, Math.round(games));
-}
-
 function extractPlayerDetailObject(rawData) {
   if (!rawData || typeof rawData !== "object") return {};
 
@@ -2454,11 +2383,6 @@ function normalizeCplPlayer(apiPlayer) {
     normalized[`${skillKey}SkillValue`] = pickSkillValue(apiPlayer, skillKey, "Value");
     normalized[`${skillKey}SkillLimit`] = pickSkillValue(apiPlayer, skillKey, "Limit");
   });
-
-  const startGames = firstDefined(apiPlayer, ["startGames", "officialGames"]);
-  if (startGames !== null && Number.isFinite(Number(startGames))) {
-    normalized.startGames = Math.max(0, Math.round(Number(startGames)));
-  }
 
   normalized.text = createPlayerTextFromImportedPlayer(normalized);
 
@@ -3658,7 +3582,6 @@ async function loadTeamPlayers() {
 
     const importedPlayers = [];
     const failedPlayers = [];
-    const failedStatsPlayers = [];
     let filteredPlayers = 0;
 
     for (let index = 0; index < playerIds.length; index++) {
@@ -3674,17 +3597,7 @@ async function loadTeamPlayers() {
           continue;
         }
 
-        const normalizedPlayer = normalizeCplPlayer(apiPlayer);
-
-        try {
-          setTeamImportStatus(`Loading player ${index + 1} of ${playerIds.length} stats...`, "loading");
-          normalizedPlayer.startGames = extractOfficialGamesFromStats(await fetchPlayerStats(playerId));
-        } catch (statsError) {
-          console.warn("CPL player stats failed", { playerId, error: statsError });
-          failedStatsPlayers.push(playerId);
-        }
-
-        importedPlayers.push(normalizedPlayer);
+        importedPlayers.push(normalizeCplPlayer(apiPlayer));
       } catch (error) {
         console.warn("CPL player detail failed", { playerId, error });
         failedPlayers.push(playerId);
@@ -3706,19 +3619,15 @@ async function loadTeamPlayers() {
     const warningText = failedPlayers.length
       ? ` ${failedPlayers.length} player detail request(s) failed.`
       : "";
-    const statsWarningText = failedStatsPlayers.length
-      ? ` ${failedStatsPlayers.length} stats request(s) failed; those start games were not updated.`
-      : "";
-    const message = `Loaded ${importedPlayers.length} players from Team ID ${teamId}. Filtered out ${filteredPlayers} player(s) not in a lineup.${warningText}${statsWarningText}`;
+    const message = `Loaded ${importedPlayers.length} players from Team ID ${teamId}. Filtered out ${filteredPlayers} player(s) not in a lineup.${warningText}`;
 
     console.info("CPL team import complete", {
       teamId,
       imported: importedPlayers.length,
       filtered: filteredPlayers,
-      failed: failedPlayers.length,
-      statsFailed: failedStatsPlayers.length
+      failed: failedPlayers.length
     });
-    setTeamImportStatus(message, failedPlayers.length || failedStatsPlayers.length ? "warning" : "success");
+    setTeamImportStatus(message, failedPlayers.length ? "warning" : "success");
   } catch (error) {
     console.error("CPL team import failed", error);
     setTeamImportStatus(error?.message || "Team import failed.", "error");
