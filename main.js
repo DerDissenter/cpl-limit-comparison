@@ -112,7 +112,6 @@ const CPL_SEASON_ANCHOR = {
   gameDateUtc: Date.UTC(2026, 5, 14)
 };
 const RANKING_CONFIG = {
-  season: 12,
   country: "All countries",
   type: "official",
   limit: 200
@@ -122,10 +121,112 @@ const TRANSFER_LIST_CONFIG = {
   limit: 5000
 };
 const TRANSFER_SUGGESTION_LIMIT = 10;
+const COMMUNITY_ID = 121;
+const COMMUNITY_CACHE_KEY = "cplCommunityStatsCache_v1";
+const COMMUNITY_RANKING_BASELINES_KEY = "cplCommunityRankingBaselines_v1";
+const COMMUNITY_CACHE_MAX_AGE_MS = 60 * 60 * 1000;
+const CPL_MEDIA_TEAM_BASE = "https://media.cplmanager.com/teams";
+const DIVISION_MAP = {
+  4: "emerald",
+  5: "diamond",
+  6: "master"
+};
+const SEEDED_COMMUNITY_RANKING_BASELINES = {
+  11: {
+    season: 11,
+    seasonDay: CPL_SEASON_DAYS,
+    savedAt: "manual-seed",
+    teams: {
+      1394: { teamName: "Grune Mediziner", ranking: 16 },
+      2522: { teamName: "King of Queens", ranking: 71 },
+      4355: { teamName: "P1XELS", ranking: 35 },
+      3147: { teamName: "Joy Division", ranking: 42 },
+      3277: { teamName: "Trick Siebzehn", ranking: 65 },
+      143: { teamName: "c64", ranking: 94 }
+    }
+  }
+};
+const COUNTRY_CODE_MAP = {
+  "argentina": "AR",
+  "australia": "AU",
+  "austria": "AT",
+  "belarus": "BY",
+  "belgium": "BE",
+  "bosnia and herzegovina": "BA",
+  "brazil": "BR",
+  "bulgaria": "BG",
+  "canada": "CA",
+  "chile": "CL",
+  "china": "CN",
+  "colombia": "CO",
+  "croatia": "HR",
+  "czech republic": "CZ",
+  "czechia": "CZ",
+  "denmark": "DK",
+  "estonia": "EE",
+  "finland": "FI",
+  "france": "FR",
+  "germany": "DE",
+  "greece": "GR",
+  "hungary": "HU",
+  "iceland": "IS",
+  "india": "IN",
+  "ireland": "IE",
+  "israel": "IL",
+  "italy": "IT",
+  "japan": "JP",
+  "kazakhstan": "KZ",
+  "latvia": "LV",
+  "lithuania": "LT",
+  "mexico": "MX",
+  "netherlands": "NL",
+  "new zealand": "NZ",
+  "norway": "NO",
+  "poland": "PL",
+  "portugal": "PT",
+  "romania": "RO",
+  "russia": "RU",
+  "serbia": "RS",
+  "slovakia": "SK",
+  "slovenia": "SI",
+  "south africa": "ZA",
+  "south korea": "KR",
+  "spain": "ES",
+  "sweden": "SE",
+  "switzerland": "CH",
+  "turkey": "TR",
+  "ukraine": "UA",
+  "united kingdom": "GB",
+  "uk": "GB",
+  "united states": "US",
+  "usa": "US"
+};
 
 const transferSuggestionState = {
   requestId: 0,
   suggestions: []
+};
+
+const communityStatsState = {
+  loaded: false,
+  loading: false,
+  error: "",
+  warning: "",
+  teams: [],
+  players: [],
+  teamSearch: "",
+  playerSearch: "",
+  playerTeamId: "",
+  teamSort: {
+    key: "ranking",
+    direction: "asc"
+  },
+  seasonState: null,
+  ladderId: null,
+  communitySource: "",
+  ladderSource: "",
+  rankingSource: "",
+  lastUpdated: null
 };
 
 const maxAgeMarkerPlugin = {
@@ -1933,20 +2034,72 @@ function parseTeamIdValue(value) {
   return clean ? clean : "";
 }
 
-function getRankingUrl(page) {
+function getCurrentRankingSeason() {
+  return getCurrentCplSeasonState().season;
+}
+
+function toFiniteNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeSearchValue(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function getArrayCandidate(rawData, paths) {
+  for (const path of paths) {
+    const value = getNestedValue(rawData, path);
+    if (Array.isArray(value)) return value;
+  }
+
+  return null;
+}
+
+function findArrayByEntryShape(rawData, predicate) {
+  const visited = new WeakSet();
+
+  function visit(value) {
+    if (!value || typeof value !== "object" || visited.has(value)) return null;
+    visited.add(value);
+
+    if (Array.isArray(value)) {
+      if (value.some(predicate)) return value;
+
+      for (const item of value) {
+        const found = visit(item);
+        if (found) return found;
+      }
+
+      return null;
+    }
+
+    for (const child of Object.values(value)) {
+      const found = visit(child);
+      if (found) return found;
+    }
+
+    return null;
+  }
+
+  return visit(rawData);
+}
+
+function getRankingUrl(page, season = getCurrentRankingSeason()) {
   const params = new URLSearchParams({
     page: String(page),
     limit: String(RANKING_CONFIG.limit),
     country: RANKING_CONFIG.country,
     type: RANKING_CONFIG.type,
-    season: String(RANKING_CONFIG.season)
+    season: String(season)
   });
 
   return `${CPL_PROXY_BASE}/rankings/players?${params.toString()}`;
 }
 
-async function fetchRankingPage(page) {
-  return fetchJsonWithRetry(getRankingUrl(page), {
+async function fetchRankingPage(page, season = getCurrentRankingSeason()) {
+  return fetchJsonWithRetry(getRankingUrl(page, season), {
     headers: {
       "Accept": "application/json"
     }
@@ -2029,6 +2182,11 @@ function resolveRankingReference(root, value) {
   return Number.isInteger(value) && value >= 0 && value < root.length ? root[value] : value;
 }
 
+function resolveRankingScalar(root, object, key) {
+  if (!object || typeof object !== "object" || !(key in object)) return null;
+  return resolveRankingReference(root, object[key]);
+}
+
 function normalizeDevalueTeam(root, teamRef) {
   const team = resolveRankingReference(root, teamRef);
   if (!team || typeof team !== "object" || Array.isArray(team)) return null;
@@ -2042,13 +2200,16 @@ function normalizeDevalueTeam(root, teamRef) {
   };
 }
 
-function normalizeDevalueRankingPlayer(root, playerRef) {
+function normalizeDevalueRankingPlayer(root, playerRef, rank = null) {
   const player = resolveRankingReference(root, playerRef);
   if (!player || typeof player !== "object" || Array.isArray(player)) return null;
 
   const team = normalizeDevalueTeam(root, player.team);
   const id = resolveRankingReference(root, player.id ?? player.playerId);
   const teamId = team?.id ?? resolveRankingReference(root, player.teamId);
+  const playerStats = resolveRankingReference(root, player.playerStats);
+  const stat = resolveRankingReference(root, player.stat);
+  const gamesFromStats = Array.isArray(playerStats) ? playerStats.length : null;
 
   if (id === null || id === undefined || teamId === null || teamId === undefined) {
     return null;
@@ -2061,7 +2222,46 @@ function normalizeDevalueRankingPlayer(root, playerRef) {
     nick: resolveRankingReference(root, player.nick),
     teamId,
     team,
-    country: resolveRankingReference(root, player.country)
+    country: resolveRankingReference(root, player.country),
+    rank,
+    games: resolveRankingScalar(root, stat, "games")
+      ?? resolveRankingScalar(root, stat, "matches")
+      ?? resolveRankingScalar(root, player, "games")
+      ?? resolveRankingScalar(root, player, "matches")
+      ?? resolveRankingScalar(root, player, "totalGames")
+      ?? gamesFromStats,
+    kills: resolveRankingScalar(root, stat, "kills")
+      ?? resolveRankingScalar(root, stat, "totalKills")
+      ?? resolveRankingScalar(root, player, "kills")
+      ?? resolveRankingScalar(root, player, "totalKills"),
+    deaths: resolveRankingScalar(root, stat, "deaths")
+      ?? resolveRankingScalar(root, stat, "totalDeaths")
+      ?? resolveRankingScalar(root, player, "deaths")
+      ?? resolveRankingScalar(root, player, "totalDeaths"),
+    headshots: resolveRankingScalar(root, stat, "headshots")
+      ?? resolveRankingScalar(root, stat, "totalHeadshots")
+      ?? resolveRankingScalar(root, player, "headshots")
+      ?? resolveRankingScalar(root, player, "totalHeadshots"),
+    mvps: resolveRankingScalar(root, stat, "mvps")
+      ?? resolveRankingScalar(root, stat, "totalMvps")
+      ?? resolveRankingScalar(root, player, "mvps")
+      ?? resolveRankingScalar(root, player, "totalMvps"),
+    totalKills: resolveRankingScalar(root, player, "totalKills")
+      ?? resolveRankingScalar(root, stat, "totalKills")
+      ?? resolveRankingScalar(root, stat, "kills"),
+    totalDeaths: resolveRankingScalar(root, player, "totalDeaths")
+      ?? resolveRankingScalar(root, stat, "totalDeaths")
+      ?? resolveRankingScalar(root, stat, "deaths"),
+    totalHeadshots: resolveRankingScalar(root, player, "totalHeadshots")
+      ?? resolveRankingScalar(root, stat, "totalHeadshots")
+      ?? resolveRankingScalar(root, stat, "headshots"),
+    totalMvps: resolveRankingScalar(root, player, "totalMvps")
+      ?? resolveRankingScalar(root, stat, "totalMvps")
+      ?? resolveRankingScalar(root, stat, "mvps"),
+    kdRatio: resolveRankingScalar(root, player, "kdRatio")
+      ?? resolveRankingScalar(root, stat, "kdRatio"),
+    hsPercentage: resolveRankingScalar(root, player, "hsPercentage")
+      ?? resolveRankingScalar(root, stat, "hsPercentage")
   };
 }
 
@@ -2085,10 +2285,16 @@ function extractDevalueRankingPlayers(rawData) {
 
   const rankingPlayers = resolveRankingReference(root, root[0]?.rankingPlayers);
   if (!Array.isArray(rankingPlayers)) return [];
+  const metadata = root[0] || {};
+  const page = Number(resolveRankingReference(root, metadata.page));
+  const limit = Number(resolveRankingReference(root, metadata.limit));
+  const rankOffset = Number.isFinite(page) && page > 0 && Number.isFinite(limit) && limit > 0
+    ? (page - 1) * limit
+    : 0;
 
   return dedupeRankingPlayers(
     rankingPlayers
-      .map(playerRef => normalizeDevalueRankingPlayer(root, playerRef))
+      .map((playerRef, index) => normalizeDevalueRankingPlayer(root, playerRef, rankOffset + index + 1))
       .filter(Boolean)
   );
 }
@@ -2151,10 +2357,10 @@ function getRankingCache() {
   }
 }
 
-function setRankingCache(players) {
+function setRankingCache(players, season = getCurrentRankingSeason()) {
   localStorage.setItem(RANKING_CACHE_KEY, JSON.stringify({
     timestamp: Date.now(),
-    season: RANKING_CONFIG.season,
+    season,
     country: RANKING_CONFIG.country,
     type: RANKING_CONFIG.type,
     limit: RANKING_CONFIG.limit,
@@ -2162,20 +2368,22 @@ function setRankingCache(players) {
   }));
 }
 
-async function loadRankingDataWithCache(forceRefresh = false, onProgress = () => {}) {
+async function loadRankingDataWithCache(forceRefresh = false, onProgress = () => {}, season = getCurrentRankingSeason()) {
+  const rankingSeason = Math.max(1, Math.round(toFiniteNumberOrNull(season) || getCurrentRankingSeason()));
   const cached = getRankingCache();
   const cacheMatchesConfig =
-    cached?.season === RANKING_CONFIG.season &&
+    cached?.season === rankingSeason &&
     cached?.country === RANKING_CONFIG.country &&
     cached?.type === RANKING_CONFIG.type &&
     cached?.limit === RANKING_CONFIG.limit;
   const cacheIsFresh = cached?.timestamp && Date.now() - cached.timestamp < RANKING_CACHE_MAX_AGE_MS;
 
   if (!forceRefresh && cacheMatchesConfig && cacheIsFresh && Array.isArray(cached.players)) {
-    console.info("CPL ranking data loaded from cache", { count: cached.players.length });
+    console.info("CPL ranking data loaded from cache", { season: rankingSeason, count: cached.players.length });
     onProgress(`Using cached ranking data (${cached.players.length} players).`);
     return {
       source: "cache",
+      season: rankingSeason,
       players: cached.players
     };
   }
@@ -2191,7 +2399,7 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
       : `Loading ranking page ${page}...`;
     onProgress(progressText);
 
-    const rawPage = await fetchRankingPage(page);
+    const rawPage = await fetchRankingPage(page, rankingSeason);
     const metadata = extractRankingPageMetadata(rawPage);
 
     if (!totalPages && metadata.totalCount) {
@@ -2212,6 +2420,7 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
 
     players.push(...newPagePlayers);
     console.info("CPL ranking page loaded", {
+      season: rankingSeason,
       page,
       count: pagePlayers.length,
       newCount: newPagePlayers.length,
@@ -2220,6 +2429,10 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
     });
 
     if (totalPages && page >= totalPages) {
+      break;
+    }
+
+    if (!totalPages && pagePlayers.length < RANKING_CONFIG.limit) {
       break;
     }
 
@@ -2239,11 +2452,12 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
     throw new Error("Ranking data loaded, but no player entries could be parsed.");
   }
 
-  setRankingCache(players);
-  console.info("CPL ranking data loaded from API", { count: players.length });
+  setRankingCache(players, rankingSeason);
+  console.info("CPL ranking data loaded from API", { season: rankingSeason, count: players.length });
 
   return {
     source: "api",
+    season: rankingSeason,
     players
   };
 }
@@ -3397,6 +3611,10 @@ function setupViewTabs() {
         renderTryoutAnalyzer();
       }
 
+      if (targetId === "community-stats-view") {
+        ensureCommunityStatsLoaded();
+      }
+
       saveAppState();
     });
   });
@@ -3636,6 +3854,849 @@ async function loadTeamPlayers() {
   }
 }
 
+function buildCommunityDataUrl() {
+  return `${CPL_PROXY_BASE}/communities/${COMMUNITY_ID}`;
+}
+
+function buildLadderDataUrl(ladderId) {
+  return `${CPL_PROXY_BASE}/ladders/${encodeURIComponent(ladderId)}`;
+}
+
+function getCommunityStatsCache() {
+  try {
+    return JSON.parse(localStorage.getItem(COMMUNITY_CACHE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function setCommunityStatsCache(payload) {
+  localStorage.setItem(COMMUNITY_CACHE_KEY, JSON.stringify({
+    timestamp: Date.now(),
+    communityId: COMMUNITY_ID,
+    ...payload
+  }));
+}
+
+function getFreshCommunityStatsCache(season, ladderId) {
+  const cached = getCommunityStatsCache();
+  const cacheIsFresh = cached?.timestamp && Date.now() - cached.timestamp < COMMUNITY_CACHE_MAX_AGE_MS;
+
+  if (
+    cacheIsFresh &&
+    cached.communityId === COMMUNITY_ID &&
+    cached.season === season &&
+    cached.ladderId === ladderId &&
+    cached.communityData
+  ) {
+    return cached;
+  }
+
+  return null;
+}
+
+function getCommunityRankingBaselines() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(COMMUNITY_RANKING_BASELINES_KEY));
+    return stored && typeof stored === "object" ? stored : {};
+  } catch {
+    return {};
+  }
+}
+
+function setCommunityRankingBaselines(baselines) {
+  localStorage.setItem(COMMUNITY_RANKING_BASELINES_KEY, JSON.stringify(baselines));
+}
+
+function getCommunityRankingBaseline(season) {
+  const seasonKey = String(season);
+  const stored = getCommunityRankingBaselines();
+
+  return stored[seasonKey] || SEEDED_COMMUNITY_RANKING_BASELINES[season] || null;
+}
+
+function getBaselineRankingForTeam(baseline, team) {
+  if (!baseline || !team) return null;
+  const byId = baseline.teams?.[String(team.teamId)] || baseline.teams?.[team.teamId];
+  const ranking = toFiniteNumberOrNull(byId?.ranking ?? byId);
+
+  if (ranking !== null) return ranking;
+
+  const normalizedTeamName = normalizeSearchValue(team.teamName);
+  const matchingEntry = Object.values(baseline.teams || {}).find(entry => (
+    entry &&
+    typeof entry === "object" &&
+    normalizeSearchValue(entry.teamName) === normalizedTeamName
+  ));
+
+  return toFiniteNumberOrNull(matchingEntry?.ranking);
+}
+
+function applyCommunityRankingTrends(teams, seasonState) {
+  const previousSeason = seasonState.season - 1;
+  const baseline = getCommunityRankingBaseline(previousSeason);
+
+  return teams.map(team => {
+    const currentRanking = toFiniteNumberOrNull(team.ranking);
+    const previousRanking = getBaselineRankingForTeam(baseline, team);
+    const rankingDelta = previousRanking !== null && currentRanking !== null
+      ? previousRanking - currentRanking
+      : null;
+    const rankingTrend = rankingDelta === null
+      ? "unknown"
+      : rankingDelta > 0
+        ? "up"
+        : rankingDelta < 0
+          ? "down"
+          : "same";
+
+    return {
+      ...team,
+      previousRanking,
+      rankingDelta,
+      rankingTrend,
+      rankingBaselineSeason: baseline ? previousSeason : null
+    };
+  });
+}
+
+function saveCommunityRankingBaselineIfSeasonEnd(seasonState, teams) {
+  if (seasonState.seasonDay !== CPL_SEASON_DAYS || !teams.length) return;
+
+  const seasonKey = String(seasonState.season);
+  const baselines = getCommunityRankingBaselines();
+  const teamEntries = {};
+
+  teams.forEach(team => {
+    const ranking = toFiniteNumberOrNull(team.ranking);
+    if (ranking === null) return;
+
+    teamEntries[String(team.teamId)] = {
+      teamName: team.teamName,
+      ranking
+    };
+  });
+
+  if (!Object.keys(teamEntries).length) return;
+
+  baselines[seasonKey] = {
+    season: seasonState.season,
+    seasonDay: seasonState.seasonDay,
+    savedAt: new Date().toISOString(),
+    teams: teamEntries
+  };
+
+  setCommunityRankingBaselines(baselines);
+}
+
+function isCommunityTeamLike(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const teamId = firstDefined(value, ["teamId", "team.id", "id"]);
+  const teamName = firstDefined(value, ["teamName", "name", "team.name"]);
+
+  return teamId !== null && teamName !== null;
+}
+
+function isLadderEntryLike(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const teamId = firstDefined(value, ["teamId", "team.id"]);
+  const ladderValue = firstDefined(value, ["position", "ladderPosition", "points", "ladderPoints"]);
+
+  return teamId !== null && ladderValue !== null;
+}
+
+function getCommunityTeamArray(rawData) {
+  return getArrayCandidate(rawData, [
+    "teams",
+    "communityTeams",
+    "community.teams",
+    "data.teams",
+    "result.teams"
+  ]) || findArrayByEntryShape(rawData, isCommunityTeamLike) || [];
+}
+
+function getLadderEntryArray(rawData) {
+  return getArrayCandidate(rawData, [
+    "teams",
+    "entries",
+    "participants",
+    "ladderTeams",
+    "data.teams",
+    "result.teams"
+  ]) || findArrayByEntryShape(rawData, isLadderEntryLike) || [];
+}
+
+function buildTeamLogoUrl(teamId, logoFileName) {
+  const cleanLogo = String(logoFileName ?? "").trim();
+  if (!cleanLogo || !teamId) return "";
+  if (/^https?:\/\//i.test(cleanLogo)) return cleanLogo;
+
+  return `${CPL_MEDIA_TEAM_BASE}/${encodeURIComponent(teamId)}/${encodeURIComponent(cleanLogo)}`;
+}
+
+function buildCplTeamUrl(teamId) {
+  return teamId ? `https://www.cplmanager.com/cpl/teams/${encodeURIComponent(teamId)}` : "";
+}
+
+function buildCplPlayerUrl(teamId, playerId) {
+  return teamId && playerId
+    ? `${buildCplTeamUrl(teamId)}/players/${encodeURIComponent(playerId)}`
+    : "";
+}
+
+function getDivisionName(division) {
+  const numericDivision = toFiniteNumberOrNull(division);
+  if (numericDivision === null) return "";
+  return DIVISION_MAP[numericDivision] || "";
+}
+
+function buildDivisionIconUrl(divisionName) {
+  return divisionName ? `https://www.cplmanager.com/logos/divisions/${encodeURIComponent(divisionName)}.png` : "";
+}
+
+function normalizeCommunityTeam(rawTeam, communityData = {}) {
+  const directTeamId = firstDefined(rawTeam, ["teamId", "team.id"]);
+  const fallbackId = firstDefined(rawTeam, ["id"]);
+  const teamId = directTeamId ?? fallbackId;
+  if (teamId === null) return null;
+
+  const division = toFiniteNumberOrNull(firstDefined(rawTeam, ["division", "team.division"]));
+  const divisionName = getDivisionName(division);
+  const teamName = firstDefined(rawTeam, ["teamName", "name", "team.name"]) || `Team ${teamId}`;
+  const logoFileName = firstDefined(rawTeam, ["logoUrl", "logo", "logoFileName", "team.logoUrl", "team.logo"]);
+  const communityTag = firstDefined(rawTeam, [
+    "communityTag",
+    "team.communityTag",
+    "community.tag"
+  ]) || firstDefined(communityData, ["community.tag", "tag"]);
+  const username = firstDefined(rawTeam, [
+    "username",
+    "manager",
+    "managerName",
+    "user.username",
+    "team.user.username"
+  ]);
+  const fame = toFiniteNumberOrNull(firstDefined(rawTeam, ["fame", "famePoints", "team.fame", "team.famePoints"]));
+
+  return {
+    teamId: toFiniteNumberOrNull(teamId) ?? String(teamId),
+    teamName,
+    username,
+    ranking: toFiniteNumberOrNull(firstDefined(rawTeam, ["ranking", "team.ranking"])),
+    leaguePosition: toFiniteNumberOrNull(firstDefined(rawTeam, ["leaguePosition", "team.leaguePosition"])),
+    division,
+    divisionName,
+    divisionIconUrl: buildDivisionIconUrl(divisionName),
+    fame,
+    famePoints: fame,
+    logoUrl: buildTeamLogoUrl(teamId, logoFileName),
+    country: firstDefined(rawTeam, ["country", "team.country", "user.country"]),
+    communityTag,
+    ladderPosition: null,
+    ladderPoints: null,
+    ladderWins: null,
+    ladderLosses: null,
+    ladderStreak: null
+  };
+}
+
+function normalizeCommunityTeams(rawData) {
+  const teams = getCommunityTeamArray(rawData)
+    .map(team => normalizeCommunityTeam(team, rawData))
+    .filter(Boolean);
+  const seen = new Set();
+
+  return teams.filter(team => {
+    const key = String(team.teamId);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeLadderEntry(rawEntry) {
+  const teamId = firstDefined(rawEntry, ["teamId", "team.id"]);
+  if (teamId === null) return null;
+
+  return {
+    teamId: toFiniteNumberOrNull(teamId) ?? String(teamId),
+    ladderPosition: toFiniteNumberOrNull(firstDefined(rawEntry, ["position", "ladderPosition", "rank"])),
+    ladderPoints: toFiniteNumberOrNull(firstDefined(rawEntry, ["points", "ladderPoints"])),
+    ladderWins: toFiniteNumberOrNull(firstDefined(rawEntry, ["wins", "ladderWins"])),
+    ladderLosses: toFiniteNumberOrNull(firstDefined(rawEntry, ["losses", "ladderLosses"])),
+    ladderStreak: toFiniteNumberOrNull(firstDefined(rawEntry, ["streak", "ladderStreak"]))
+  };
+}
+
+function normalizeLadderEntries(rawData) {
+  const entries = getLadderEntryArray(rawData)
+    .map(normalizeLadderEntry)
+    .filter(Boolean);
+  const seen = new Set();
+
+  return entries.filter(entry => {
+    const key = String(entry.teamId);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function joinCommunityTeamsWithLadder(teams, ladderEntries) {
+  const ladderByTeamId = new Map(ladderEntries.map(entry => [String(entry.teamId), entry]));
+
+  return teams.map(team => ({
+    ...team,
+    ...(ladderByTeamId.get(String(team.teamId)) || {})
+  }));
+}
+
+function getRankingPlayerTeamId(player) {
+  return firstDefined(player, ["teamId", "team.id", "teamID"]);
+}
+
+function getRankingPlayerStat(player, paths) {
+  return firstDefined(player, paths);
+}
+
+function normalizeCommunityRankingPlayer(rawPlayer, teamById, fallbackRank = null) {
+  const teamId = getRankingPlayerTeamId(rawPlayer);
+  const team = teamById.get(String(teamId));
+  if (!team) return null;
+
+  const playerId = firstDefined(rawPlayer, ["id", "playerId", "player.id"]);
+  const playerStats = Array.isArray(rawPlayer.playerStats) ? rawPlayer.playerStats : null;
+  const kills = toFiniteNumberOrNull(getRankingPlayerStat(rawPlayer, [
+    "kills",
+    "stat.kills",
+    "stat.totalKills",
+    "totalKills",
+    "playerStats.totalKills"
+  ]));
+  const deaths = toFiniteNumberOrNull(getRankingPlayerStat(rawPlayer, [
+    "deaths",
+    "stat.deaths",
+    "stat.totalDeaths",
+    "totalDeaths",
+    "playerStats.totalDeaths"
+  ]));
+  const headshots = toFiniteNumberOrNull(getRankingPlayerStat(rawPlayer, [
+    "headshots",
+    "stat.headshots",
+    "stat.totalHeadshots",
+    "totalHeadshots",
+    "playerStats.totalHeadshots"
+  ]));
+  const directKd = getRankingPlayerStat(rawPlayer, ["kdRatio", "stat.kdRatio"]);
+  const directHs = getRankingPlayerStat(rawPlayer, ["hsPercentage", "stat.hsPercentage"]);
+  const computedKd = deaths && kills !== null ? kills / deaths : null;
+  const computedHs = kills && headshots !== null ? (headshots / kills) * 100 : null;
+
+  return {
+    playerId,
+    name: firstDefined(rawPlayer, ["name", "player.name"]) || "Unknown Player",
+    nick: firstDefined(rawPlayer, ["nick", "nickname", "player.nick"]),
+    teamId: team.teamId,
+    teamName: team.teamName || firstDefined(rawPlayer, ["team.name"]),
+    country: firstDefined(rawPlayer, ["country", "player.country"]),
+    rank: toFiniteNumberOrNull(firstDefined(rawPlayer, ["rank", "ranking", "position"])) ?? fallbackRank,
+    games: toFiniteNumberOrNull(getRankingPlayerStat(rawPlayer, [
+      "games",
+      "stat.games",
+      "stat.matches",
+      "matches",
+      "totalGames"
+    ])) ?? (playerStats ? playerStats.length : null),
+    kills,
+    deaths,
+    headshots,
+    mvps: toFiniteNumberOrNull(getRankingPlayerStat(rawPlayer, [
+      "mvps",
+      "stat.mvps",
+      "stat.totalMvps",
+      "totalMvps"
+    ])),
+    kdRatio: directKd ?? computedKd,
+    hsPercentage: directHs ?? computedHs
+  };
+}
+
+function normalizeCommunityRankingPlayers(rankingPlayers, teams) {
+  const teamById = new Map(teams.map(team => [String(team.teamId), team]));
+
+  return rankingPlayers
+    .map((player, index) => normalizeCommunityRankingPlayer(player, teamById, index + 1))
+    .filter(Boolean);
+}
+
+function formatCommunityNumber(value) {
+  const number = toFiniteNumberOrNull(value);
+  return number === null ? "-" : new Intl.NumberFormat("en-US").format(number);
+}
+
+function formatCommunityDecimal(value, digits = 2) {
+  const number = toFiniteNumberOrNull(value);
+  return number === null ? "-" : number.toFixed(digits);
+}
+
+function formatCommunityPercentage(value) {
+  const number = toFiniteNumberOrNull(value);
+  if (number === null) return "-";
+  const normalized = number <= 1 ? number * 100 : number;
+  return `${normalized.toFixed(1)}%`;
+}
+
+function getCountryCode(countryName) {
+  const clean = normalizeSearchValue(countryName);
+  if (!clean) return "";
+  if (/^[a-z]{2}$/i.test(clean)) return clean.toUpperCase();
+
+  return COUNTRY_CODE_MAP[clean] || "";
+}
+
+function getFlagEmoji(countryName) {
+  const code = getCountryCode(countryName);
+  if (!code) return "";
+
+  return Array.from(code.toUpperCase())
+    .map(char => 127397 + char.charCodeAt(0))
+    .map(codePoint => String.fromCodePoint(codePoint))
+    .join("");
+}
+
+function renderCountryFlag(countryName) {
+  const flag = getFlagEmoji(countryName);
+  const label = countryName || "-";
+
+  return flag
+    ? `<span class="community-country-flag" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${flag}</span>`
+    : escapeHtml(label);
+}
+
+function renderCommunityRankingTrend(team) {
+  const delta = toFiniteNumberOrNull(team.rankingDelta);
+  if (delta === null || !team.rankingBaselineSeason) return "";
+
+  const trendClass = team.rankingTrend === "up"
+    ? "up"
+    : team.rankingTrend === "down"
+      ? "down"
+      : "same";
+  const symbol = team.rankingTrend === "up"
+    ? "\u25B2"
+    : team.rankingTrend === "down"
+      ? "\u25BC"
+      : "\u2192";
+  const amount = Math.abs(delta);
+  const amountText = amount > 0 ? String(amount) : "0";
+  const title = `${team.rankingTrend === "up" ? "Improved" : team.rankingTrend === "down" ? "Worse" : "Unchanged"} vs S${team.rankingBaselineSeason} end ranking #${team.previousRanking}`;
+
+  return `<span class="community-ranking-trend ${trendClass}" title="${escapeHtml(title)}">${symbol} ${escapeHtml(amountText)}</span>`;
+}
+
+function compareNullableNumbers(a, b, direction = "asc") {
+  const aNumber = toFiniteNumberOrNull(a);
+  const bNumber = toFiniteNumberOrNull(b);
+
+  if (aNumber === null && bNumber === null) return 0;
+  if (aNumber === null) return 1;
+  if (bNumber === null) return -1;
+
+  return direction === "asc" ? aNumber - bNumber : bNumber - aNumber;
+}
+
+function getFilteredCommunityTeams() {
+  const search = normalizeSearchValue(communityStatsState.teamSearch);
+  const { key, direction } = communityStatsState.teamSort;
+
+  return [...communityStatsState.teams]
+    .filter(team => {
+      if (!search) return true;
+
+      return [
+        team.teamName,
+        team.username
+      ].some(value => normalizeSearchValue(value).includes(search));
+    })
+    .sort((a, b) => {
+      const numericSort = compareNullableNumbers(a[key], b[key], direction);
+      if (numericSort !== 0) return numericSort;
+
+      return String(a.teamName || "").localeCompare(String(b.teamName || ""));
+    });
+}
+
+function getFilteredCommunityPlayers() {
+  const search = normalizeSearchValue(communityStatsState.playerSearch);
+  const selectedTeamId = String(communityStatsState.playerTeamId || "");
+
+  return [...communityStatsState.players]
+    .filter(player => {
+      const matchesTeam = !selectedTeamId || String(player.teamId) === selectedTeamId;
+      const matchesSearch = !search || [
+        player.name,
+        player.nick
+      ].some(value => normalizeSearchValue(value).includes(search));
+
+      return matchesTeam && matchesSearch;
+    })
+    .sort((a, b) => {
+      const rankSort = compareNullableNumbers(a.rank, b.rank, "asc");
+      if (rankSort !== 0) return rankSort;
+
+      const kdSort = compareNullableNumbers(a.kdRatio, b.kdRatio, "desc");
+      if (kdSort !== 0) return kdSort;
+
+      const killSort = compareNullableNumbers(a.kills, b.kills, "desc");
+      if (killSort !== 0) return killSort;
+
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+}
+
+function renderCommunityTeamSortButtons() {
+  document.querySelectorAll("[data-community-team-sort]").forEach(button => {
+    const key = button.dataset.communityTeamSort;
+    const active = communityStatsState.teamSort.key === key;
+    const baseText = button.dataset.sortLabel || button.textContent.replace(/\s+\((asc|desc)\)$/i, "");
+    button.dataset.sortLabel = baseText;
+
+    button.classList.toggle("active", active);
+    button.textContent = `${baseText}${active ? ` (${communityStatsState.teamSort.direction})` : ""}`;
+  });
+}
+
+function renderCommunityTeamFilter() {
+  const select = document.getElementById("community-player-team-filter");
+  if (!select) return;
+
+  const currentValue = communityStatsState.playerTeamId || "";
+  const teams = [...communityStatsState.teams].sort((a, b) => String(a.teamName || "").localeCompare(String(b.teamName || "")));
+
+  select.innerHTML = `
+    <option value="">All teams</option>
+    ${teams.map(team => `<option value="${escapeHtml(team.teamId)}">${escapeHtml(team.teamName)}</option>`).join("")}
+  `;
+
+  select.value = teams.some(team => String(team.teamId) === String(currentValue)) ? String(currentValue) : "";
+  communityStatsState.playerTeamId = select.value;
+}
+
+function renderCommunityTeamsTable() {
+  const body = document.getElementById("community-teams-body");
+  if (!body) return;
+
+  const teams = getFilteredCommunityTeams();
+
+  if (!teams.length) {
+    body.innerHTML = `<tr><td colspan="7">${communityStatsState.loaded ? "No community teams match the current filters." : "No community data loaded yet."}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = teams.map(team => {
+    const logoHtml = team.logoUrl
+      ? `<img class="community-logo" src="${escapeHtml(team.logoUrl)}" alt="${escapeHtml(team.teamName)} logo" loading="lazy">`
+      : '<span class="community-empty-logo">-</span>';
+    const divisionName = team.divisionName || "Unknown";
+    const divisionHtml = team.divisionIconUrl
+      ? `<span class="community-division" title="${escapeHtml(divisionName)}"><img src="${escapeHtml(team.divisionIconUrl)}" alt="${escapeHtml(divisionName)}" loading="lazy"></span>`
+      : `<span class="community-division">${escapeHtml(divisionName)}</span>`;
+    const teamUrl = buildCplTeamUrl(team.teamId);
+    const teamNameHtml = teamUrl
+      ? `<a class="community-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(team.teamName)}</a>`
+      : escapeHtml(team.teamName);
+    const leagueHtml = `
+      <span class="community-league">
+        ${divisionHtml}
+        <span>${team.leaguePosition === null ? "-" : `#${formatCommunityNumber(team.leaguePosition)}`}</span>
+      </span>
+    `;
+
+    return `
+      <tr>
+        <td><span class="community-ranking-cell"><strong>${formatCommunityNumber(team.ranking)}</strong>${renderCommunityRankingTrend(team)}</span></td>
+        <td>${logoHtml}</td>
+        <td><strong>${teamNameHtml}</strong></td>
+        <td>${escapeHtml(team.username || "-")}</td>
+        <td>${team.ladderPosition === null ? "-" : `#${formatCommunityNumber(team.ladderPosition)}`}</td>
+        <td>${leagueHtml}</td>
+        <td>${formatCommunityNumber(team.fame)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderCommunityPlayersTable() {
+  const body = document.getElementById("community-players-body");
+  if (!body) return;
+
+  const players = getFilteredCommunityPlayers();
+
+  if (!players.length) {
+    body.innerHTML = `<tr><td colspan="11">${communityStatsState.loaded ? "No community players match the current filters." : "No ranking data loaded yet."}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = players.map(player => {
+    const teamUrl = buildCplTeamUrl(player.teamId);
+    const playerUrl = buildCplPlayerUrl(player.teamId, player.playerId);
+    const playerNameHtml = playerUrl
+      ? `<a class="community-link" href="${escapeHtml(playerUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(player.name || "-")}</a>`
+      : escapeHtml(player.name || "-");
+    const teamNameHtml = teamUrl
+      ? `<a class="community-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(player.teamName || "-")}</a>`
+      : escapeHtml(player.teamName || "-");
+
+    return `
+      <tr>
+        <td>${player.rank === null ? "-" : `#${formatCommunityNumber(player.rank)}`}</td>
+        <td><strong>${playerNameHtml}</strong></td>
+        <td>${escapeHtml(player.nick || "-")}</td>
+        <td>${teamNameHtml}</td>
+        <td>${renderCountryFlag(player.country)}</td>
+        <td>${formatCommunityNumber(player.games)}</td>
+        <td>${formatCommunityDecimal(player.kdRatio)}</td>
+        <td>${formatCommunityPercentage(player.hsPercentage)}</td>
+        <td>${formatCommunityNumber(player.kills)}</td>
+        <td>${formatCommunityNumber(player.deaths)}</td>
+        <td>${formatCommunityNumber(player.mvps)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderCommunityStatus() {
+  const status = document.getElementById("community-stats-status");
+  const seasonLabel = document.getElementById("community-season-label");
+  const refreshButton = document.getElementById("community-refresh-button");
+  const seasonState = communityStatsState.seasonState || getCurrentCplSeasonState();
+  const ladderId = communityStatsState.ladderId || seasonState.season + 36;
+
+  if (seasonLabel) {
+    seasonLabel.textContent = `Community ${COMMUNITY_ID} - ${seasonState.fullLabel} - Ladder ${ladderId}`;
+  }
+
+  if (refreshButton) {
+    refreshButton.disabled = communityStatsState.loading;
+    refreshButton.textContent = communityStatsState.loading ? "Loading..." : "Refresh";
+  }
+
+  if (!status) return;
+
+  if (communityStatsState.loading) {
+    status.className = "community-status community-status-loading";
+    status.textContent = communityStatsState.warning || "Loading community stats...";
+    return;
+  }
+
+  if (communityStatsState.error) {
+    status.className = "community-status community-status-error";
+    status.textContent = communityStatsState.error;
+    return;
+  }
+
+  if (communityStatsState.warning) {
+    status.className = "community-status community-status-warning";
+    status.textContent = communityStatsState.warning;
+    return;
+  }
+
+  if (communityStatsState.loaded) {
+    status.className = "community-status community-status-success";
+    status.textContent = `Loaded ${communityStatsState.teams.length} teams and ${communityStatsState.players.length} ranking players. Sources: community ${communityStatsState.communitySource || "-"}, ladder ${communityStatsState.ladderSource || "-"}, ranking ${communityStatsState.rankingSource || "-"}.`;
+    return;
+  }
+
+  status.className = "community-status";
+  status.textContent = "Open Community Stats to load current data.";
+}
+
+function renderCommunityStats() {
+  const teamSearch = document.getElementById("community-team-search");
+  const playerSearch = document.getElementById("community-player-search");
+
+  if (teamSearch && teamSearch.value !== communityStatsState.teamSearch) {
+    teamSearch.value = communityStatsState.teamSearch;
+  }
+
+  if (playerSearch && playerSearch.value !== communityStatsState.playerSearch) {
+    playerSearch.value = communityStatsState.playerSearch;
+  }
+
+  renderCommunityStatus();
+  renderCommunityTeamSortButtons();
+  renderCommunityTeamFilter();
+  renderCommunityTeamsTable();
+  renderCommunityPlayersTable();
+}
+
+async function loadCommunityStats(forceRefresh = false) {
+  if (communityStatsState.loading) return;
+
+  const seasonState = getCurrentCplSeasonState();
+  const currentSeason = seasonState.season;
+  const ladderId = currentSeason + 36;
+
+  communityStatsState.loading = true;
+  communityStatsState.error = "";
+  communityStatsState.warning = "Loading community data...";
+  communityStatsState.seasonState = seasonState;
+  communityStatsState.ladderId = ladderId;
+  renderCommunityStats();
+
+  try {
+    let communityData;
+    let ladderData = null;
+    let communitySource = "api";
+    let ladderSource = "api";
+    const warnings = [];
+    const cached = !forceRefresh ? getFreshCommunityStatsCache(currentSeason, ladderId) : null;
+
+    if (cached) {
+      communityData = cached.communityData;
+      ladderData = cached.ladderData || null;
+      communitySource = "cache";
+      ladderSource = ladderData ? "cache" : "missing";
+    } else {
+      communityData = await fetchJsonWithRetry(buildCommunityDataUrl(), {
+        headers: {
+          "Accept": "application/json"
+        }
+      }, "Community data");
+
+      try {
+        communityStatsState.warning = "Loading ladder data...";
+        renderCommunityStatus();
+        ladderData = await fetchJsonWithRetry(buildLadderDataUrl(ladderId), {
+          headers: {
+            "Accept": "application/json"
+          }
+        }, "Ladder data");
+      } catch (error) {
+        console.warn("CPL community ladder data failed", error);
+        ladderSource = "failed";
+        warnings.push(`Ladder data failed: ${error?.message || error}. Showing community teams without ladder values.`);
+        communityStatsState.warning = warnings[warnings.length - 1];
+      }
+
+      if (ladderData) {
+        setCommunityStatsCache({
+          season: currentSeason,
+          ladderId,
+          communityData,
+          ladderData
+        });
+      }
+    }
+
+    const communityTeams = normalizeCommunityTeams(communityData);
+    const ladderEntries = ladderData ? normalizeLadderEntries(ladderData) : [];
+    const joinedTeams = joinCommunityTeamsWithLadder(communityTeams, ladderEntries);
+    saveCommunityRankingBaselineIfSeasonEnd(seasonState, joinedTeams);
+    const teamsWithTrends = applyCommunityRankingTrends(joinedTeams, seasonState);
+
+    communityStatsState.teams = teamsWithTrends;
+    communityStatsState.players = [];
+    communityStatsState.communitySource = communitySource;
+    communityStatsState.ladderSource = ladderSource;
+
+    let rankingPlayersLoaded = 0;
+    let communityPlayers = [];
+
+    try {
+      communityStatsState.warning = "Loading current season rankings...";
+      renderCommunityStatus();
+      const rankingResult = await loadRankingDataWithCache(false, message => {
+        communityStatsState.warning = message;
+        renderCommunityStatus();
+      }, currentSeason);
+
+      rankingPlayersLoaded = rankingResult.players.length;
+      communityPlayers = normalizeCommunityRankingPlayers(rankingResult.players, teamsWithTrends);
+      communityStatsState.rankingSource = rankingResult.source;
+    } catch (error) {
+      console.warn("CPL community ranking data failed", error);
+      communityStatsState.rankingSource = "failed";
+      warnings.push(`Ranking data failed: ${error?.message || error}. Showing community teams only.`);
+    }
+
+    communityStatsState.players = communityPlayers;
+    communityStatsState.loaded = true;
+    communityStatsState.error = "";
+    communityStatsState.warning = warnings.join(" ");
+    communityStatsState.lastUpdated = new Date().toISOString();
+
+    console.info("CPL community stats loaded", {
+      currentSeason,
+      seasonDay: seasonState.seasonDay,
+      ladderId,
+      communityTeamsFound: communityTeams.length,
+      ladderEntriesFound: ladderEntries.length,
+      rankingPlayersLoaded,
+      communityPlayersMatched: communityPlayers.length
+    });
+  } catch (error) {
+    console.error("CPL community data failed", error);
+    communityStatsState.loaded = false;
+    communityStatsState.error = error?.message || "Community data failed.";
+    communityStatsState.warning = "";
+    communityStatsState.teams = [];
+    communityStatsState.players = [];
+  } finally {
+    communityStatsState.loading = false;
+    renderCommunityStats();
+  }
+}
+
+function ensureCommunityStatsLoaded() {
+  if (!communityStatsState.loaded && !communityStatsState.loading) {
+    loadCommunityStats(false);
+    return;
+  }
+
+  renderCommunityStats();
+}
+
+function setupCommunityStats() {
+  document.getElementById("community-refresh-button")?.addEventListener("click", () => {
+    loadCommunityStats(true);
+  });
+
+  document.getElementById("community-team-search")?.addEventListener("input", event => {
+    communityStatsState.teamSearch = event.target.value || "";
+    renderCommunityStats();
+  });
+
+  document.getElementById("community-player-search")?.addEventListener("input", event => {
+    communityStatsState.playerSearch = event.target.value || "";
+    renderCommunityStats();
+  });
+
+  document.getElementById("community-player-team-filter")?.addEventListener("change", event => {
+    communityStatsState.playerTeamId = event.target.value || "";
+    renderCommunityStats();
+  });
+
+  document.querySelectorAll("[data-community-team-sort]").forEach(button => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.communityTeamSort;
+
+      if (communityStatsState.teamSort.key === key) {
+        communityStatsState.teamSort.direction = communityStatsState.teamSort.direction === "asc" ? "desc" : "asc";
+      } else {
+        communityStatsState.teamSort.key = key;
+        communityStatsState.teamSort.direction = key === "fame" ? "desc" : "asc";
+      }
+
+      renderCommunityStats();
+    });
+  });
+
+  renderCommunityStats();
+}
+
 const SAVED_PLAYERS_KEY = "cplLimitComparison.savedPlayers";
 
 function getSavedPlayers() {
@@ -3804,6 +4865,7 @@ function loadAppState() {
 document.addEventListener("DOMContentLoaded", () => {
   setupViewTabs();
   setupTryoutAnalyzer();
+  setupCommunityStats();
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
   document.getElementById("transfer-suggestions")?.addEventListener("click", handleTransferSuggestionClick);
   document.getElementById("load-team-button")?.addEventListener("click", loadTeamPlayers);

@@ -16,6 +16,7 @@
     <nav class="view-tabs" aria-label="Tool views">
       <button class="view-tab active" type="button" data-view-target="limit-comparison-view">Limit Comparison</button>
       <button class="view-tab" type="button" data-view-target="tryout-analyzer-view">Tryout Analyzer</button>
+      <button class="view-tab" type="button" data-view-target="community-stats-view">Community Stats</button>
     </nav>
 
     <section id="limit-comparison-view" class="view-panel active-view">
@@ -198,6 +199,89 @@
 
       <section id="tryout-results" class="panel tryout-results">
         <p class="tryout-empty">Paste a tryout player and run Parse/Analyze.</p>
+      </section>
+    </section>
+
+    <section id="community-stats-view" class="view-panel" hidden>
+      <section class="panel community-overview-panel">
+        <div class="community-overview-header">
+          <div>
+            <h2>Community Stats</h2>
+            <p id="community-season-label" class="community-season-label">Community 121</p>
+          </div>
+          <button id="community-refresh-button" type="button">Refresh</button>
+        </div>
+        <div id="community-stats-status" class="community-status" role="status" aria-live="polite">
+          Open Community Stats to load current data.
+        </div>
+      </section>
+
+      <section class="panel community-section">
+        <div class="community-section-header">
+          <h2>Community Teams</h2>
+          <label>
+            Search
+            <input id="community-team-search" type="search" placeholder="Team or manager">
+          </label>
+        </div>
+
+        <div class="community-table-wrap">
+          <table class="community-table">
+            <thead>
+              <tr>
+                <th><button type="button" class="community-sort-button" data-community-team-sort="ranking">Ranking</button></th>
+                <th>Logo</th>
+                <th>Team</th>
+                <th>Manager</th>
+                <th><button type="button" class="community-sort-button" data-community-team-sort="ladderPosition">Ladder</button></th>
+                <th><button type="button" class="community-sort-button" data-community-team-sort="leaguePosition">League</button></th>
+                <th><button type="button" class="community-sort-button" data-community-team-sort="fame">Fame</button></th>
+              </tr>
+            </thead>
+            <tbody id="community-teams-body">
+              <tr><td colspan="7">No community data loaded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel community-section">
+        <div class="community-section-header community-player-filters">
+          <h2>Community Players</h2>
+          <label>
+            Team
+            <select id="community-player-team-filter">
+              <option value="">All teams</option>
+            </select>
+          </label>
+          <label>
+            Search
+            <input id="community-player-search" type="search" placeholder="Player or nick">
+          </label>
+        </div>
+
+        <div class="community-table-wrap">
+          <table class="community-table community-player-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Player</th>
+                <th>Nick</th>
+                <th>Team</th>
+                <th>Country</th>
+                <th>Games</th>
+                <th>K/D</th>
+                <th>HS%</th>
+                <th>Kills</th>
+                <th>Deaths</th>
+                <th>MVPs</th>
+              </tr>
+            </thead>
+            <tbody id="community-players-body">
+              <tr><td colspan="11">No ranking data loaded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </section>
   </main>

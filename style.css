@@ -112,6 +112,214 @@ h2 {
   color: #ff9a9a;
 }
 
+.community-overview-header,
+.community-section-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.community-overview-header h2,
+.community-section-header h2 {
+  margin-bottom: 4px;
+}
+
+.community-overview-header button {
+  width: auto;
+  min-width: 96px;
+}
+
+.community-season-label {
+  margin: 0;
+  color: rgba(255, 248, 201, 0.78);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.community-status {
+  min-height: 18px;
+  color: rgba(255, 248, 201, 0.82);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.community-status-loading,
+.community-status-warning {
+  color: #ffcf70;
+}
+
+.community-status-success {
+  color: #86e39f;
+}
+
+.community-status-error {
+  color: #ff9a9a;
+}
+
+.community-section-header label {
+  width: min(260px, 100%);
+  margin: 0;
+}
+
+.community-player-filters {
+  display: grid;
+  grid-template-columns: 1fr 190px 240px;
+  align-items: end;
+}
+
+.community-table-wrap {
+  overflow-x: auto;
+}
+
+.community-table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: collapse;
+  color: #fff8c9;
+}
+
+.community-player-table {
+  min-width: 1080px;
+}
+
+.community-table th,
+.community-table td {
+  padding: 8px 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.community-table th {
+  color: #ffffff;
+  font-size: 10px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.community-table td {
+  font-size: 11px;
+}
+
+.community-subtext {
+  display: block;
+  margin-top: 2px;
+  color: rgba(255, 248, 201, 0.6);
+  font-size: 10px;
+}
+
+.community-link {
+  color: #fff8c9;
+  text-decoration: none;
+}
+
+.community-link:hover {
+  color: #ffbf5a;
+  text-decoration: underline;
+}
+
+.community-ranking-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.community-ranking-trend {
+  display: inline-flex;
+  align-items: center;
+  min-width: 36px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #2a2b2d;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.community-ranking-trend.up {
+  color: #86e39f;
+  background: rgba(45, 138, 78, 0.18);
+}
+
+.community-ranking-trend.down {
+  color: #ff9a9a;
+  background: rgba(184, 55, 55, 0.16);
+}
+
+.community-ranking-trend.same {
+  color: #ffcf70;
+  background: rgba(255, 207, 112, 0.12);
+}
+
+.community-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #2a2b2d;
+}
+
+.community-empty-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: #2a2b2d;
+  color: rgba(255, 248, 201, 0.55);
+}
+
+.community-division {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  min-width: 28px;
+  text-transform: capitalize;
+}
+
+.community-division img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.community-league {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.community-country-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.community-sort-button {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  color: #ffffff;
+  border: 0;
+  font: inherit;
+  text-transform: uppercase;
+}
+
+.community-sort-button:hover,
+.community-sort-button.active {
+  background: transparent;
+  color: #ffbf5a;
+}
+
 textarea {
   width: 100%;
   height: 138px;
@@ -494,6 +702,14 @@ button:disabled {
 
   .skill-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .community-player-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .community-player-filters h2 {
+    grid-column: 1 / -1;
   }
 
   .options-grid {
@@ -1270,6 +1486,24 @@ button:disabled {
 
   .view-tab {
     flex: 0 0 auto;
+  }
+
+  .community-overview-header,
+  .community-section-header,
+  .community-player-filters {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .community-section-header label {
+    width: 100%;
+  }
+
+  .community-table th,
+  .community-table td {
+    padding: 8px 6px;
+    font-size: 12px;
   }
 
   .saved-player-row {

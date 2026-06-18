@@ -64,7 +64,20 @@ Das Tool erkennt Name, Alter, Geburtstag, Skills, sichtbare Limits und versteckt
 * Fertigen Tryout als 20yo Spieler speichern
 * Spieler anschließend in der Limit Comparison verwenden
 
-## 4. Schätzmodus für versteckte Limits
+## 4. Community Stats
+
+Die **Community Stats** zeigen aktuelle Daten für Community 121.
+
+### Inhalte
+
+* Community-Teams mit Ranking, Division/League Position, Fame und Ladder Position
+* Ranking-Trend im Vergleich zum Endstand der vorherigen Season
+* Team-Suche nach Name oder Manager
+* Sortierung nach Ranking, League Position, Fame und Ladder Position
+* Community-Spieler aus der aktuellen Season-Rankingliste
+* Spielerfilter nach Team sowie Suche nach Name oder Nick
+
+## 5. Schätzmodus für versteckte Limits
 
 Bei Tryouts sind manche Limits mit `?` maskiert. Dafür gibt es zwei Modi:
 
@@ -78,7 +91,7 @@ Die fehlenden Limits werden anhand deiner eingestellten Skill-Gewichtung verteil
 
 Du kannst einzelne `?`-Limits auch manuell eintragen. Die übrigen versteckten Limits werden danach automatisch neu berechnet.
 
-## 5. Speicherung im Browser
+## 6. Speicherung im Browser
 
 Das Tool speichert deine Eingaben lokal im Browser.
 
