@@ -121,6 +121,10 @@ h2 {
   margin-bottom: 10px;
 }
 
+.community-section {
+  min-width: 0;
+}
+
 .community-overview-header h2,
 .community-section-header h2 {
   margin-bottom: 4px;
@@ -210,7 +214,12 @@ h2 {
 .community-tournament-content {
   display: grid;
   gap: 14px;
+  min-width: 0;
   margin-top: 10px;
+}
+
+.community-tournament-table-section {
+  min-width: 0;
 }
 
 .community-tournament-table-section h3 {
@@ -398,7 +407,12 @@ h2 {
 }
 
 .community-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 .community-table {
@@ -1831,6 +1845,22 @@ button:disabled {
 
   .community-tournament-controls {
     grid-template-columns: 1fr;
+  }
+
+  .community-section[data-community-panel="tournaments"] {
+    overflow: hidden;
+  }
+
+  .community-tournament-content,
+  .community-tournament-table-section,
+  .community-tournament-table-section .community-table-wrap {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .community-tournament-table-section .community-table-wrap {
+    margin-inline: -2px;
+    padding-bottom: 4px;
   }
 
   .community-toggle-group {

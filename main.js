@@ -4886,8 +4886,10 @@ function getKnockoutPositionLimit(match) {
   return null;
 }
 
-function deriveTournamentPositionLabel(team, tournament, matches, teamEntry, statusText) {
+function deriveTournamentPositionLabel(team, tournament, matches, teamEntry, statusText, group) {
   const teamId = toFiniteNumberOrNull(team.teamId);
+  const position = toFiniteNumberOrNull(teamEntry?.position);
+
   if (teamId !== null && tournament.winnerId === teamId) return "#1";
 
   const relevantMatch = getRelevantTournamentMatch(matches);
@@ -4908,9 +4910,11 @@ function deriveTournamentPositionLabel(team, tournament, matches, teamEntry, sta
   }
 
   if (normalizeSearchValue(statusText).includes("winner")) return "#1";
-  if (normalizeSearchValue(statusText).includes("eliminated")) return ">16";
+  if (normalizeSearchValue(statusText).includes("eliminated")) {
+    if (group === "eos" && position !== null) return `#${formatCommunityNumber(position)}`;
+    return ">16";
+  }
 
-  const position = toFiniteNumberOrNull(teamEntry?.position);
   return position === null ? "-" : `#${formatCommunityNumber(position)}`;
 }
 
@@ -4974,7 +4978,7 @@ function buildTournamentItems(tournaments, communityTeams, group, summaries = []
       const tournamentCategory = getTournamentCategory({ ...summary, ...tournament, tier }, group);
       const derivedStatus = deriveTournamentStatusWithEntry(team, tournament, matches, teamEntry);
       const stageName = deriveTournamentStageLabel(teamEntry, matches);
-      const positionLabel = deriveTournamentPositionLabel(team, tournament, matches, teamEntry, derivedStatus);
+      const positionLabel = deriveTournamentPositionLabel(team, tournament, matches, teamEntry, derivedStatus, group);
 
       items.push({
         group,
