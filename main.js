@@ -212,9 +212,9 @@ const communityStatsState = {
   loading: false,
   error: "",
   warning: "",
+  communityName: `Community ${COMMUNITY_ID}`,
   teams: [],
   players: [],
-  teamSearch: "",
   playerSearch: "",
   playerTeamId: "",
   teamSort: {
@@ -226,6 +226,7 @@ const communityStatsState = {
   communitySource: "",
   ladderSource: "",
   rankingSource: "",
+  playersSeason: null,
   lastUpdated: null
 };
 
@@ -3862,6 +3863,83 @@ function buildLadderDataUrl(ladderId) {
   return `${CPL_PROXY_BASE}/ladders/${encodeURIComponent(ladderId)}`;
 }
 
+const COMMUNITY_DEMO_TEAMS = [
+  { teamId: 4355, teamName: "P1XELS", username: "pixie", ranking: 39, leaguePosition: 2, division: 3, fame: 14620, ladderPosition: 1, color: "#ff7a00" },
+  { teamId: 3147, teamName: "Joy Division", username: "joyce", ranking: 44, leaguePosition: 4, division: 3, fame: 13880, ladderPosition: 2, color: "#4d8cff" },
+  { teamId: 1394, teamName: "Gruene Mediziner", username: "doc", ranking: 21, leaguePosition: 1, division: 2, fame: 16940, ladderPosition: 3, color: "#3aa65b" },
+  { teamId: 2522, teamName: "King of Queens", username: "queen", ranking: 70, leaguePosition: 7, division: 4, fame: 11210, ladderPosition: 4, color: "#9b66d9" },
+  { teamId: 143, teamName: "C64", username: "retro", ranking: 85, leaguePosition: 9, division: 4, fame: 10440, ladderPosition: 5, color: "#54b6c8" },
+  { teamId: 3277, teamName: "Trick Siebzehn", username: "trick", ranking: 55, leaguePosition: 5, division: 3, fame: 12770, ladderPosition: 6, color: "#d08b36" }
+];
+
+const COMMUNITY_DEMO_PLAYER_TEMPLATES = [
+  { name: "Kanat Mukhamedov", nick: "eren", games: 53, kills: 1100, deaths: 816, headshots: 435, mvps: 14 },
+  { name: "Nico Hartmann", nick: "n1co", games: 49, kills: 920, deaths: 708, headshots: 380, mvps: 9 },
+  { name: "Lena Sommer", nick: "sunny", games: 51, kills: 860, deaths: 690, headshots: 346, mvps: 11 },
+  { name: "Mika Brandt", nick: "miq", games: 46, kills: 740, deaths: 602, headshots: 281, mvps: 7 },
+  { name: "Timo Weber", nick: "twb", games: 44, kills: 705, deaths: 660, headshots: 248, mvps: 5 },
+  { name: "Jonas Klein", nick: "jkay", games: 41, kills: 640, deaths: 611, headshots: 221, mvps: 4 },
+  { name: "Sara Becker", nick: "sabe", games: 48, kills: 790, deaths: 650, headshots: 332, mvps: 8 },
+  { name: "Alex Vogel", nick: "av0", games: 43, kills: 690, deaths: 632, headshots: 250, mvps: 6 },
+  { name: "Ben Richter", nick: "br7", games: 45, kills: 720, deaths: 678, headshots: 259, mvps: 5 },
+  { name: "Mara Stein", nick: "mara", games: 39, kills: 590, deaths: 554, headshots: 205, mvps: 3 },
+  { name: "Finn Adler", nick: "fin", games: 42, kills: 615, deaths: 590, headshots: 216, mvps: 4 },
+  { name: "Noah Wolf", nick: "nwolf", games: 38, kills: 540, deaths: 520, headshots: 194, mvps: 2 }
+];
+
+function getCommunityDemoData() {
+  return {
+    name: `Community ${COMMUNITY_ID} Demo`,
+    teams: COMMUNITY_DEMO_TEAMS.map(team => {
+      const divisionName = getDivisionName(team.division);
+
+      return {
+        ...team,
+        logoUrl: buildDemoLogoDataUrl(team.teamName, team.color),
+        divisionIconUrl: buildDemoDivisionIconDataUrl(divisionName)
+      };
+    })
+  };
+}
+
+function getCommunityDemoLadderData(ladderId) {
+  return {
+    id: ladderId,
+    teams: COMMUNITY_DEMO_TEAMS.map(team => ({
+      teamId: team.teamId,
+      position: team.ladderPosition,
+      points: Math.max(0, 720 - team.ladderPosition * 24)
+    }))
+  };
+}
+
+function getCommunityDemoRankingPlayers(teams) {
+  const availableTeams = Array.isArray(teams) && teams.length ? teams : normalizeCommunityTeams(getCommunityDemoData());
+
+  return COMMUNITY_DEMO_PLAYER_TEMPLATES.map((player, index) => {
+    const team = availableTeams[index % availableTeams.length];
+    const kdRatio = player.deaths ? player.kills / player.deaths : 0;
+    const hsPercentage = player.kills ? (player.headshots / player.kills) * 100 : 0;
+
+    return {
+      id: `${team.teamId}${index + 101}`,
+      teamId: team.teamId,
+      rank: index + 1,
+      name: player.name,
+      nick: player.nick,
+      stat: {
+        games: player.games,
+        kills: player.kills,
+        deaths: player.deaths,
+        headshots: player.headshots,
+        mvps: player.mvps,
+        kdRatio,
+        hsPercentage
+      }
+    };
+  });
+}
+
 function getCommunityStatsCache() {
   try {
     return JSON.parse(localStorage.getItem(COMMUNITY_CACHE_KEY));
@@ -4031,9 +4109,53 @@ function getLadderEntryArray(rawData) {
 function buildTeamLogoUrl(teamId, logoFileName) {
   const cleanLogo = String(logoFileName ?? "").trim();
   if (!cleanLogo || !teamId) return "";
-  if (/^https?:\/\//i.test(cleanLogo)) return cleanLogo;
+  if (/^(https?:\/\/|data:image\/|blob:)/i.test(cleanLogo)) return cleanLogo;
 
   return `${CPL_MEDIA_TEAM_BASE}/${encodeURIComponent(teamId)}/${encodeURIComponent(cleanLogo)}`;
+}
+
+function escapeSvgText(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildInlineSvgDataUrl(svg) {
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+function buildDemoLogoDataUrl(label, color = "#ff7a00") {
+  const cleanLabel = String(label || "Team").trim();
+  const initials = cleanLabel
+    .split(/\s+/)
+    .map(part => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "T";
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="14" fill="${escapeSvgText(color)}"/>
+      <circle cx="48" cy="16" r="16" fill="#ffffff" opacity="0.18"/>
+      <text x="32" y="39" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#ffffff">${escapeSvgText(initials)}</text>
+    </svg>
+  `;
+
+  return buildInlineSvgDataUrl(svg);
+}
+
+function buildDemoDivisionIconDataUrl(divisionName) {
+  const label = String(divisionName || "?").slice(0, 1).toUpperCase();
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+      <path d="M24 3 43 13v14c0 10-8 16-19 18C13 43 5 37 5 27V13L24 3Z" fill="#2f67d8"/>
+      <path d="M24 8 37 15v11c0 7-5 11-13 13-8-2-13-6-13-13V15l13-7Z" fill="#5f92ff"/>
+      <text x="24" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#ffffff">${escapeSvgText(label)}</text>
+    </svg>
+  `;
+
+  return buildInlineSvgDataUrl(svg);
 }
 
 function buildCplTeamUrl(teamId) {
@@ -4066,6 +4188,7 @@ function normalizeCommunityTeam(rawTeam, communityData = {}) {
   const divisionName = getDivisionName(division);
   const teamName = firstDefined(rawTeam, ["teamName", "name", "team.name"]) || `Team ${teamId}`;
   const logoFileName = firstDefined(rawTeam, ["logoUrl", "logo", "logoFileName", "team.logoUrl", "team.logo"]);
+  const divisionIconUrl = firstDefined(rawTeam, ["divisionIconUrl", "team.divisionIconUrl"]);
   const communityTag = firstDefined(rawTeam, [
     "communityTag",
     "team.communityTag",
@@ -4088,7 +4211,7 @@ function normalizeCommunityTeam(rawTeam, communityData = {}) {
     leaguePosition: toFiniteNumberOrNull(firstDefined(rawTeam, ["leaguePosition", "team.leaguePosition"])),
     division,
     divisionName,
-    divisionIconUrl: buildDivisionIconUrl(divisionName),
+    divisionIconUrl: divisionIconUrl || buildDivisionIconUrl(divisionName),
     fame,
     famePoints: fame,
     logoUrl: buildTeamLogoUrl(teamId, logoFileName),
@@ -4114,6 +4237,16 @@ function normalizeCommunityTeams(rawData) {
     seen.add(key);
     return true;
   });
+}
+
+function getCommunityDisplayName(rawData) {
+  return firstDefined(rawData, [
+    "name",
+    "title",
+    "communityName",
+    "community.name",
+    "community.title"
+  ]) || `Community ${COMMUNITY_ID}`;
 }
 
 function normalizeLadderEntry(rawEntry) {
@@ -4200,6 +4333,7 @@ function normalizeCommunityRankingPlayer(rawPlayer, teamById, fallbackRank = nul
     nick: firstDefined(rawPlayer, ["nick", "nickname", "player.nick"]),
     teamId: team.teamId,
     teamName: team.teamName || firstDefined(rawPlayer, ["team.name"]),
+    teamLogoUrl: team.logoUrl || "",
     country: firstDefined(rawPlayer, ["country", "player.country"]),
     rank: toFiniteNumberOrNull(firstDefined(rawPlayer, ["rank", "ranking", "position"])) ?? fallbackRank,
     games: toFiniteNumberOrNull(getRankingPlayerStat(rawPlayer, [
@@ -4226,9 +4360,44 @@ function normalizeCommunityRankingPlayer(rawPlayer, teamById, fallbackRank = nul
 function normalizeCommunityRankingPlayers(rankingPlayers, teams) {
   const teamById = new Map(teams.map(team => [String(team.teamId), team]));
 
-  return rankingPlayers
+  const players = rankingPlayers
     .map((player, index) => normalizeCommunityRankingPlayer(player, teamById, index + 1))
     .filter(Boolean);
+
+  return players
+    .sort((a, b) => {
+      const rankA = toFiniteNumberOrNull(a.rank);
+      const rankB = toFiniteNumberOrNull(b.rank);
+
+      if (rankA !== null && rankB !== null && rankA !== rankB) return rankA - rankB;
+      if (rankA !== null && rankB === null) return -1;
+      if (rankA === null && rankB !== null) return 1;
+
+      const kdA = toFiniteNumberOrNull(a.kdRatio);
+      const kdB = toFiniteNumberOrNull(b.kdRatio);
+      if (kdA !== null && kdB !== null && kdA !== kdB) return kdB - kdA;
+
+      return String(a.nick || a.name || "").localeCompare(String(b.nick || b.name || ""));
+    })
+    .map((player, index) => ({
+      ...player,
+      communityRank: index + 1
+    }));
+}
+
+function syncCommunityPlayersWithTeams(players, teams) {
+  const teamById = new Map(teams.map(team => [String(team.teamId), team]));
+
+  return players.map(player => {
+    const team = teamById.get(String(player.teamId));
+    if (!team) return player;
+
+    return {
+      ...player,
+      teamName: team.teamName || player.teamName,
+      teamLogoUrl: team.logoUrl || player.teamLogoUrl
+    };
+  });
 }
 
 function formatCommunityNumber(value) {
@@ -4308,18 +4477,9 @@ function compareNullableNumbers(a, b, direction = "asc") {
 }
 
 function getFilteredCommunityTeams() {
-  const search = normalizeSearchValue(communityStatsState.teamSearch);
   const { key, direction } = communityStatsState.teamSort;
 
   return [...communityStatsState.teams]
-    .filter(team => {
-      if (!search) return true;
-
-      return [
-        team.teamName,
-        team.username
-      ].some(value => normalizeSearchValue(value).includes(search));
-    })
     .sort((a, b) => {
       const numericSort = compareNullableNumbers(a[key], b[key], direction);
       if (numericSort !== 0) return numericSort;
@@ -4335,10 +4495,8 @@ function getFilteredCommunityPlayers() {
   return [...communityStatsState.players]
     .filter(player => {
       const matchesTeam = !selectedTeamId || String(player.teamId) === selectedTeamId;
-      const matchesSearch = !search || [
-        player.name,
-        player.nick
-      ].some(value => normalizeSearchValue(value).includes(search));
+      const searchableNick = player.nick || player.name;
+      const matchesSearch = !search || normalizeSearchValue(searchableNick).includes(search);
 
       return matchesTeam && matchesSearch;
     })
@@ -4391,7 +4549,7 @@ function renderCommunityTeamsTable() {
   const teams = getFilteredCommunityTeams();
 
   if (!teams.length) {
-    body.innerHTML = `<tr><td colspan="7">${communityStatsState.loaded ? "No community teams match the current filters." : "No community data loaded yet."}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7">${communityStatsState.loaded ? "No community teams available." : "No community data loaded yet."}</td></tr>`;
     return;
   }
 
@@ -4435,27 +4593,35 @@ function renderCommunityPlayersTable() {
   const players = getFilteredCommunityPlayers();
 
   if (!players.length) {
-    body.innerHTML = `<tr><td colspan="11">${communityStatsState.loaded ? "No community players match the current filters." : "No ranking data loaded yet."}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9">${communityStatsState.loaded ? "No community players match the current filters." : "No ranking data loaded yet."}</td></tr>`;
     return;
   }
 
   body.innerHTML = players.map(player => {
     const teamUrl = buildCplTeamUrl(player.teamId);
     const playerUrl = buildCplPlayerUrl(player.teamId, player.playerId);
-    const playerNameHtml = playerUrl
-      ? `<a class="community-link" href="${escapeHtml(playerUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(player.name || "-")}</a>`
-      : escapeHtml(player.name || "-");
-    const teamNameHtml = teamUrl
-      ? `<a class="community-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(player.teamName || "-")}</a>`
-      : escapeHtml(player.teamName || "-");
+    const nickLabel = player.nick || player.name || "-";
+    const nickHtml = playerUrl
+      ? `<a class="community-link" href="${escapeHtml(playerUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(nickLabel)}</a>`
+      : escapeHtml(nickLabel);
+    const teamName = player.teamName || "Team";
+    const logoHtml = player.teamLogoUrl
+      ? `<img class="community-logo community-player-team-logo" src="${escapeHtml(player.teamLogoUrl)}" alt="${escapeHtml(teamName)} logo" title="${escapeHtml(teamName)}" loading="lazy">`
+      : `<span class="community-empty-logo community-player-team-logo" title="${escapeHtml(teamName)}">-</span>`;
+    const teamLogoHtml = teamUrl
+      ? `<a class="community-logo-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(teamName)}">${logoHtml}</a>`
+      : logoHtml;
 
     return `
       <tr>
-        <td>${player.rank === null ? "-" : `#${formatCommunityNumber(player.rank)}`}</td>
-        <td><strong>${playerNameHtml}</strong></td>
-        <td>${escapeHtml(player.nick || "-")}</td>
-        <td>${teamNameHtml}</td>
-        <td>${renderCountryFlag(player.country)}</td>
+        <td>
+          <span class="community-player-ranks">
+            <span title="Global ranking">${player.rank === null ? "-" : `#${formatCommunityNumber(player.rank)}`}</span>
+            <span class="community-player-rank-local" title="Community ranking">C#${formatCommunityNumber(player.communityRank)}</span>
+          </span>
+        </td>
+        <td><strong>${nickHtml}</strong></td>
+        <td>${teamLogoHtml}</td>
         <td>${formatCommunityNumber(player.games)}</td>
         <td>${formatCommunityDecimal(player.kdRatio)}</td>
         <td>${formatCommunityPercentage(player.hsPercentage)}</td>
@@ -4469,25 +4635,30 @@ function renderCommunityPlayersTable() {
 
 function renderCommunityStatus() {
   const status = document.getElementById("community-stats-status");
+  const communityHeading = document.getElementById("community-name-heading");
   const seasonLabel = document.getElementById("community-season-label");
   const refreshButton = document.getElementById("community-refresh-button");
   const seasonState = communityStatsState.seasonState || getCurrentCplSeasonState();
   const ladderId = communityStatsState.ladderId || seasonState.season + 36;
 
+  if (communityHeading) {
+    communityHeading.textContent = communityStatsState.communityName || `Community ${COMMUNITY_ID}`;
+  }
+
   if (seasonLabel) {
-    seasonLabel.textContent = `Community ${COMMUNITY_ID} - ${seasonState.fullLabel} - Ladder ${ladderId}`;
+    seasonLabel.textContent = `Stats - ${seasonState.fullLabel} - Ladder ${ladderId}`;
   }
 
   if (refreshButton) {
     refreshButton.disabled = communityStatsState.loading;
-    refreshButton.textContent = communityStatsState.loading ? "Loading..." : "Refresh";
+    refreshButton.textContent = communityStatsState.loading ? "Loading..." : "Refresh Teams";
   }
 
   if (!status) return;
 
   if (communityStatsState.loading) {
     status.className = "community-status community-status-loading";
-    status.textContent = communityStatsState.warning || "Loading community stats...";
+    status.textContent = communityStatsState.warning || "Loading community data...";
     return;
   }
 
@@ -4505,21 +4676,16 @@ function renderCommunityStatus() {
 
   if (communityStatsState.loaded) {
     status.className = "community-status community-status-success";
-    status.textContent = `Loaded ${communityStatsState.teams.length} teams and ${communityStatsState.players.length} ranking players. Sources: community ${communityStatsState.communitySource || "-"}, ladder ${communityStatsState.ladderSource || "-"}, ranking ${communityStatsState.rankingSource || "-"}.`;
+    status.textContent = `Loaded ${communityStatsState.teams.length} teams and ${communityStatsState.players.length} players. Refresh updates teams and ladder values; player stats stay on the daily ranking cache. Sources: community ${communityStatsState.communitySource || "-"}, ladder ${communityStatsState.ladderSource || "-"}, ranking ${communityStatsState.rankingSource || "-"}.`;
     return;
   }
 
   status.className = "community-status";
-  status.textContent = "Open Community Stats to load current data.";
+  status.textContent = "Open Community to load current data.";
 }
 
 function renderCommunityStats() {
-  const teamSearch = document.getElementById("community-team-search");
   const playerSearch = document.getElementById("community-player-search");
-
-  if (teamSearch && teamSearch.value !== communityStatsState.teamSearch) {
-    teamSearch.value = communityStatsState.teamSearch;
-  }
 
   if (playerSearch && playerSearch.value !== communityStatsState.playerSearch) {
     playerSearch.value = communityStatsState.playerSearch;
@@ -4532,9 +4698,24 @@ function renderCommunityStats() {
   renderCommunityPlayersTable();
 }
 
-async function loadCommunityStats(forceRefresh = false) {
+function normalizeCommunityLoadOptions(options) {
+  if (typeof options === "boolean") {
+    return {
+      forceTeamRefresh: options,
+      refreshPlayers: true
+    };
+  }
+
+  return {
+    forceTeamRefresh: Boolean(options?.forceTeamRefresh),
+    refreshPlayers: options?.refreshPlayers !== false
+  };
+}
+
+async function loadCommunityStats(options = {}) {
   if (communityStatsState.loading) return;
 
+  const { forceTeamRefresh, refreshPlayers } = normalizeCommunityLoadOptions(options);
   const seasonState = getCurrentCplSeasonState();
   const currentSeason = seasonState.season;
   const ladderId = currentSeason + 36;
@@ -4552,7 +4733,7 @@ async function loadCommunityStats(forceRefresh = false) {
     let communitySource = "api";
     let ladderSource = "api";
     const warnings = [];
-    const cached = !forceRefresh ? getFreshCommunityStatsCache(currentSeason, ladderId) : null;
+    const cached = !forceTeamRefresh ? getFreshCommunityStatsCache(currentSeason, ladderId) : null;
 
     if (cached) {
       communityData = cached.communityData;
@@ -4560,34 +4741,46 @@ async function loadCommunityStats(forceRefresh = false) {
       communitySource = "cache";
       ladderSource = ladderData ? "cache" : "missing";
     } else {
-      communityData = await fetchJsonWithRetry(buildCommunityDataUrl(), {
-        headers: {
-          "Accept": "application/json"
-        }
-      }, "Community data");
-
       try {
-        communityStatsState.warning = "Loading ladder data...";
-        renderCommunityStatus();
-        ladderData = await fetchJsonWithRetry(buildLadderDataUrl(ladderId), {
+        communityData = await fetchJsonWithRetry(buildCommunityDataUrl(), {
           headers: {
             "Accept": "application/json"
           }
-        }, "Ladder data");
+        }, "Community data");
       } catch (error) {
-        console.warn("CPL community ladder data failed", error);
-        ladderSource = "failed";
-        warnings.push(`Ladder data failed: ${error?.message || error}. Showing community teams without ladder values.`);
-        communityStatsState.warning = warnings[warnings.length - 1];
+        console.warn("CPL community data failed, using demo data", error);
+        communityData = getCommunityDemoData();
+        ladderData = getCommunityDemoLadderData(ladderId);
+        communitySource = "demo";
+        ladderSource = "demo";
+        warnings.push(`Community data failed: ${error?.message || error}. Showing demo data for local UI preview.`);
       }
 
-      if (ladderData) {
-        setCommunityStatsCache({
-          season: currentSeason,
-          ladderId,
-          communityData,
-          ladderData
-        });
+      if (communitySource !== "demo") {
+        try {
+          communityStatsState.warning = "Loading ladder data...";
+          renderCommunityStatus();
+          ladderData = await fetchJsonWithRetry(buildLadderDataUrl(ladderId), {
+            headers: {
+              "Accept": "application/json"
+            }
+          }, "Ladder data");
+        } catch (error) {
+          console.warn("CPL community ladder data failed, using demo ladder data", error);
+          ladderData = getCommunityDemoLadderData(ladderId);
+          ladderSource = "demo";
+          warnings.push(`Ladder data failed: ${error?.message || error}. Showing demo ladder values.`);
+          communityStatsState.warning = warnings[warnings.length - 1];
+        }
+
+        if (ladderData && ladderSource !== "demo") {
+          setCommunityStatsCache({
+            season: currentSeason,
+            ladderId,
+            communityData,
+            ladderData
+          });
+        }
       }
     }
 
@@ -4597,29 +4790,47 @@ async function loadCommunityStats(forceRefresh = false) {
     saveCommunityRankingBaselineIfSeasonEnd(seasonState, joinedTeams);
     const teamsWithTrends = applyCommunityRankingTrends(joinedTeams, seasonState);
 
+    communityStatsState.communityName = getCommunityDisplayName(communityData);
     communityStatsState.teams = teamsWithTrends;
-    communityStatsState.players = [];
     communityStatsState.communitySource = communitySource;
     communityStatsState.ladderSource = ladderSource;
 
-    let rankingPlayersLoaded = 0;
-    let communityPlayers = [];
+    let rankingPlayersLoaded = communityStatsState.players.length;
+    let communityPlayers = syncCommunityPlayersWithTeams(communityStatsState.players, teamsWithTrends);
+    const shouldLoadPlayers = refreshPlayers || !communityPlayers.length || communityStatsState.playersSeason !== currentSeason;
 
-    try {
-      communityStatsState.warning = "Loading current season rankings...";
-      renderCommunityStatus();
-      const rankingResult = await loadRankingDataWithCache(false, message => {
-        communityStatsState.warning = message;
-        renderCommunityStatus();
-      }, currentSeason);
+    if (shouldLoadPlayers) {
+      if (communitySource === "demo") {
+        const demoRankingPlayers = getCommunityDemoRankingPlayers(teamsWithTrends);
+        rankingPlayersLoaded = demoRankingPlayers.length;
+        communityPlayers = normalizeCommunityRankingPlayers(demoRankingPlayers, teamsWithTrends);
+        communityStatsState.rankingSource = "demo";
+        communityStatsState.playersSeason = currentSeason;
+      } else {
+        try {
+          communityStatsState.warning = "Loading daily player rankings...";
+          renderCommunityStatus();
+          const rankingResult = await loadRankingDataWithCache(false, message => {
+            communityStatsState.warning = message;
+            renderCommunityStatus();
+          }, currentSeason);
 
-      rankingPlayersLoaded = rankingResult.players.length;
-      communityPlayers = normalizeCommunityRankingPlayers(rankingResult.players, teamsWithTrends);
-      communityStatsState.rankingSource = rankingResult.source;
-    } catch (error) {
-      console.warn("CPL community ranking data failed", error);
-      communityStatsState.rankingSource = "failed";
-      warnings.push(`Ranking data failed: ${error?.message || error}. Showing community teams only.`);
+          rankingPlayersLoaded = rankingResult.players.length;
+          communityPlayers = normalizeCommunityRankingPlayers(rankingResult.players, teamsWithTrends);
+          communityStatsState.rankingSource = rankingResult.source;
+          communityStatsState.playersSeason = currentSeason;
+        } catch (error) {
+          console.warn("CPL community ranking data failed, using demo player data", error);
+          const demoRankingPlayers = getCommunityDemoRankingPlayers(teamsWithTrends);
+          rankingPlayersLoaded = demoRankingPlayers.length;
+          communityPlayers = normalizeCommunityRankingPlayers(demoRankingPlayers, teamsWithTrends);
+          communityStatsState.rankingSource = "demo";
+          communityStatsState.playersSeason = currentSeason;
+          warnings.push(`Ranking data failed: ${error?.message || error}. Showing demo players.`);
+        }
+      }
+    } else {
+      communityStatsState.rankingSource = communityStatsState.rankingSource || "unchanged";
     }
 
     communityStatsState.players = communityPlayers;
@@ -4661,12 +4872,10 @@ function ensureCommunityStatsLoaded() {
 
 function setupCommunityStats() {
   document.getElementById("community-refresh-button")?.addEventListener("click", () => {
-    loadCommunityStats(true);
-  });
-
-  document.getElementById("community-team-search")?.addEventListener("input", event => {
-    communityStatsState.teamSearch = event.target.value || "";
-    renderCommunityStats();
+    loadCommunityStats({
+      forceTeamRefresh: true,
+      refreshPlayers: false
+    });
   });
 
   document.getElementById("community-player-search")?.addEventListener("input", event => {

@@ -16,7 +16,7 @@
     <nav class="view-tabs" aria-label="Tool views">
       <button class="view-tab active" type="button" data-view-target="limit-comparison-view">Limit Comparison</button>
       <button class="view-tab" type="button" data-view-target="tryout-analyzer-view">Tryout Analyzer</button>
-      <button class="view-tab" type="button" data-view-target="community-stats-view">Community Stats</button>
+      <button class="view-tab" type="button" data-view-target="community-stats-view">Community</button>
     </nav>
 
     <section id="limit-comparison-view" class="view-panel active-view">
@@ -206,23 +206,19 @@
       <section class="panel community-overview-panel">
         <div class="community-overview-header">
           <div>
-            <h2>Community Stats</h2>
-            <p id="community-season-label" class="community-season-label">Community 121</p>
+            <h2 id="community-name-heading">Community</h2>
+            <p id="community-season-label" class="community-season-label">Stats</p>
           </div>
-          <button id="community-refresh-button" type="button">Refresh</button>
+          <button id="community-refresh-button" type="button">Refresh Teams</button>
         </div>
         <div id="community-stats-status" class="community-status" role="status" aria-live="polite">
-          Open Community Stats to load current data.
+          Open Community to load current data.
         </div>
       </section>
 
       <section class="panel community-section">
         <div class="community-section-header">
-          <h2>Community Teams</h2>
-          <label>
-            Search
-            <input id="community-team-search" type="search" placeholder="Team or manager">
-          </label>
+          <h2>Teams</h2>
         </div>
 
         <div class="community-table-wrap">
@@ -247,7 +243,7 @@
 
       <section class="panel community-section">
         <div class="community-section-header community-player-filters">
-          <h2>Community Players</h2>
+          <h2>Players</h2>
           <label>
             Team
             <select id="community-player-team-filter">
@@ -256,19 +252,17 @@
           </label>
           <label>
             Search
-            <input id="community-player-search" type="search" placeholder="Player or nick">
+            <input id="community-player-search" type="search" placeholder="Nick">
           </label>
         </div>
 
-        <div class="community-table-wrap">
+        <div class="community-table-wrap community-player-table-wrap">
           <table class="community-table community-player-table">
             <thead>
               <tr>
                 <th>Rank</th>
-                <th>Player</th>
                 <th>Nick</th>
                 <th>Team</th>
-                <th>Country</th>
                 <th>Games</th>
                 <th>K/D</th>
                 <th>HS%</th>
@@ -278,7 +272,7 @@
               </tr>
             </thead>
             <tbody id="community-players-body">
-              <tr><td colspan="11">No ranking data loaded yet.</td></tr>
+              <tr><td colspan="9">No ranking data loaded yet.</td></tr>
             </tbody>
           </table>
         </div>

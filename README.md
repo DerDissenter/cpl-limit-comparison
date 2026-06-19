@@ -66,16 +66,18 @@ Das Tool erkennt Name, Alter, Geburtstag, Skills, sichtbare Limits und versteckt
 
 ## 4. Community Stats
 
-Die **Community Stats** zeigen aktuelle Daten für Community 121.
+Die **Community**-Ansicht zeigt aktuelle Daten für Community 121.
 
 ### Inhalte
 
 * Community-Teams mit Ranking, Division/League Position, Fame und Ladder Position
 * Ranking-Trend im Vergleich zum Endstand der vorherigen Season
-* Team-Suche nach Name oder Manager
 * Sortierung nach Ranking, League Position, Fame und Ladder Position
 * Community-Spieler aus der aktuellen Season-Rankingliste
-* Spielerfilter nach Team sowie Suche nach Name oder Nick
+* Globale und Community-interne Player-Platzierung
+* Spielerfilter nach Team sowie Suche nach Nick
+* Refresh aktualisiert nur Team- und Ladder-Daten, Spieler-Stats bleiben im Tagescache
+* Lokaler Demo-Fallback, falls die Online-Daten im Live Server nicht erreichbar sind
 
 ## 5. Schätzmodus für versteckte Limits
 
