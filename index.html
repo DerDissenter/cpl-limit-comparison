@@ -214,11 +214,88 @@
         <div id="community-stats-status" class="community-status" role="status" aria-live="polite">
           Open Community to load current data.
         </div>
+        <div class="community-subnav" role="tablist" aria-label="Community sections">
+          <button class="community-toggle-button" type="button" data-community-panel-target="teams" role="tab">Team Ranking</button>
+          <button class="community-toggle-button" type="button" data-community-panel-target="players" role="tab">Player Ranking</button>
+          <button class="community-toggle-button" type="button" data-community-panel-target="tournaments" role="tab">Tournaments</button>
+        </div>
       </section>
 
-      <section class="panel community-section">
+      <section class="panel community-section" data-community-panel="tournaments" hidden>
+        <div class="community-section-header community-tournament-header">
+          <h2>Tournament Status</h2>
+          <button id="community-tournament-refresh-button" type="button">Refresh Tournament Data</button>
+        </div>
+
+        <div class="community-tournament-controls">
+          <div class="community-toggle-group" role="group" aria-label="Tournament type">
+            <button class="community-toggle-button" type="button" data-community-tournament-view="championship">Championship</button>
+            <button class="community-toggle-button" type="button" data-community-tournament-view="eos">EOS</button>
+          </div>
+
+          <label>
+            Team
+            <select id="community-tournament-team-filter">
+              <option value="">All teams</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="community-tournament-status" class="community-status" role="status" aria-live="polite">
+          Tournament data not loaded yet.
+        </div>
+
+        <div class="community-tournament-content">
+          <section class="community-tournament-table-section">
+            <h3 id="community-tournament-heading">Championship</h3>
+            <div class="community-table-wrap">
+              <table class="community-table community-tournament-status-table">
+                <thead>
+                  <tr>
+                    <th>Pos</th>
+                    <th>Logo</th>
+                    <th>Team</th>
+                    <th>Tournament</th>
+                    <th>Stage</th>
+                    <th>Status</th>
+                    <th>Record</th>
+                    <th>Next Match</th>
+                  </tr>
+                </thead>
+                <tbody id="community-tournament-teams-body">
+                  <tr><td colspan="8">No tournament data loaded yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="community-tournament-table-section">
+            <h3>Played Matches</h3>
+            <div class="community-table-wrap">
+              <table class="community-table community-tournament-matches-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Team</th>
+                    <th>Opponent</th>
+                    <th>Score</th>
+                    <th>Tournament</th>
+                    <th>Stage</th>
+                    <th>Map</th>
+                  </tr>
+                </thead>
+                <tbody id="community-tournament-matches-body">
+                  <tr><td colspan="7">No played matches loaded yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="panel community-section" data-community-panel="teams">
         <div class="community-section-header">
-          <h2>Teams</h2>
+          <h2>Team Ranking</h2>
         </div>
 
         <div class="community-table-wrap">
@@ -241,9 +318,9 @@
         </div>
       </section>
 
-      <section class="panel community-section">
+      <section class="panel community-section" data-community-panel="players" hidden>
         <div class="community-section-header community-player-filters">
-          <h2>Players</h2>
+          <h2>Player Ranking</h2>
           <label>
             Team
             <select id="community-player-team-filter">
@@ -260,9 +337,10 @@
           <table class="community-table community-player-table">
             <thead>
               <tr>
+                <th>C-Rank</th>
                 <th>Rank</th>
-                <th>Nick</th>
                 <th>Team</th>
+                <th>Nick</th>
                 <th>Games</th>
                 <th>K/D</th>
                 <th>HS%</th>
@@ -272,7 +350,7 @@
               </tr>
             </thead>
             <tbody id="community-players-body">
-              <tr><td colspan="9">No ranking data loaded yet.</td></tr>
+              <tr><td colspan="10">No ranking data loaded yet.</td></tr>
             </tbody>
           </table>
         </div>

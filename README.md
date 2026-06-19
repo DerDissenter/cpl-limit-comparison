@@ -78,6 +78,7 @@ Die **Community**-Ansicht zeigt aktuelle Daten für Community 121.
 * Spielerfilter nach Team sowie Suche nach Nick
 * Refresh aktualisiert nur Team- und Ladder-Daten, Spieler-Stats bleiben im Tagescache
 * Lokaler Demo-Fallback, falls die Online-Daten im Live Server nicht erreichbar sind
+* Tournament Status für Championship- und End-of-Season-Turniere inklusive Matchlinks
 
 ## 5. Schätzmodus für versteckte Limits
 

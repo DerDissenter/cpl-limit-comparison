@@ -124,7 +124,11 @@ const TRANSFER_SUGGESTION_LIMIT = 10;
 const COMMUNITY_ID = 121;
 const COMMUNITY_CACHE_KEY = "cplCommunityStatsCache_v1";
 const COMMUNITY_RANKING_BASELINES_KEY = "cplCommunityRankingBaselines_v1";
+const COMMUNITY_TOURNAMENT_CACHE_KEY = "cplCommunityTournamentCache_v1";
 const COMMUNITY_CACHE_MAX_AGE_MS = 60 * 60 * 1000;
+const COMMUNITY_TOURNAMENT_CACHE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+const COMMUNITY_TOURNAMENT_FETCH_LIMIT = 16;
+const COMMUNITY_FALLBACK_TEAM_IDS = [4355, 3147, 1394, 2522, 143, 3277];
 const CPL_MEDIA_TEAM_BASE = "https://media.cplmanager.com/teams";
 const DIVISION_MAP = {
   4: "emerald",
@@ -212,6 +216,7 @@ const communityStatsState = {
   loading: false,
   error: "",
   warning: "",
+  activePanel: "teams",
   communityName: `Community ${COMMUNITY_ID}`,
   teams: [],
   players: [],
@@ -227,6 +232,20 @@ const communityStatsState = {
   ladderSource: "",
   rankingSource: "",
   playersSeason: null,
+  lastUpdated: null
+};
+
+const communityTournamentState = {
+  loaded: false,
+  loading: false,
+  error: "",
+  warning: "",
+  source: "",
+  view: "championship",
+  teamId: "",
+  championshipItems: [],
+  eosItems: [],
+  season: null,
   lastUpdated: null
 };
 
@@ -3863,6 +3882,22 @@ function buildLadderDataUrl(ladderId) {
   return `${CPL_PROXY_BASE}/ladders/${encodeURIComponent(ladderId)}`;
 }
 
+function buildChampionshipDataUrl(season) {
+  return `${CPL_PROXY_BASE}/championships/${encodeURIComponent(season)}/__data.json?x-sveltekit-invalidated=001`;
+}
+
+function buildOfficialTournamentsDataUrl() {
+  return `${CPL_PROXY_BASE}/tournaments/official/__data.json`;
+}
+
+function buildTournamentDetailDataUrl(tournamentId) {
+  return `${CPL_PROXY_BASE}/api/tournaments/${encodeURIComponent(tournamentId)}`;
+}
+
+function buildCplMatchUrl(matchId) {
+  return matchId ? `https://www.cplmanager.com/cpl/matches/${encodeURIComponent(matchId)}/` : "";
+}
+
 const COMMUNITY_DEMO_TEAMS = [
   { teamId: 4355, teamName: "P1XELS", username: "pixie", ranking: 39, leaguePosition: 2, division: 3, fame: 14620, ladderPosition: 1, color: "#ff7a00" },
   { teamId: 3147, teamName: "Joy Division", username: "joyce", ranking: 44, leaguePosition: 4, division: 3, fame: 13880, ladderPosition: 2, color: "#4d8cff" },
@@ -3886,6 +3921,164 @@ const COMMUNITY_DEMO_PLAYER_TEMPLATES = [
   { name: "Finn Adler", nick: "fin", games: 42, kills: 615, deaths: 590, headshots: 216, mvps: 4 },
   { name: "Noah Wolf", nick: "nwolf", games: 38, kills: 540, deaths: 520, headshots: 194, mvps: 2 }
 ];
+
+function getCommunityDemoTournamentData(season) {
+  const teams = getCommunityDemoData().teams;
+  const trick = teams.find(team => Number(team.teamId) === 3277) || teams[0];
+  const medics = teams.find(team => Number(team.teamId) === 1394) || teams[1] || trick;
+
+  return {
+    championship: [
+      {
+        id: 3124,
+        name: `Thunderstruck Contenders Season ${season}`,
+        status: "playing",
+        type: "contenders",
+        season,
+        tier: null,
+        winnerId: null,
+        sponsor: "Thunderstruck",
+        teams: [
+          {
+            teamId: trick.teamId,
+            position: 9,
+            winsCount: 4,
+            drawsCount: 0,
+            lossesCount: 2,
+            points: 12,
+            roundDifference: 17,
+            team: {
+              id: trick.teamId,
+              name: "TRICK SIEBZEHN",
+              logoUrl: trick.logoUrl,
+              communityTag: "BLZ"
+            }
+          }
+        ],
+        stages: [
+          {
+            id: 90001,
+            name: "Swiss format",
+            status: "finished",
+            teams: [
+              {
+                teamId: trick.teamId,
+                position: 9,
+                gamesCount: 6,
+                winsCount: 4,
+                drawsCount: 0,
+                lossesCount: 2,
+                points: 12,
+                roundDifference: 17
+              }
+            ],
+            matches: [
+              {
+                id: 989701,
+                tournamentId: 3124,
+                stageName: "Swiss format",
+                roundName: "Round 6",
+                status: "processed",
+                date: "2026-06-12T15:00:00.000Z",
+                map: "train_v2",
+                homeTeamId: trick.teamId,
+                awayTeamId: 4216,
+                homeTeamRounds: 16,
+                awayTeamRounds: 11,
+                homeTeam: { id: trick.teamId, name: "TRICK SIEBZEHN" },
+                awayTeam: { id: 4216, name: "Puddin Pops" }
+              }
+            ]
+          },
+          {
+            id: 90002,
+            name: "Playoffs",
+            status: "playing",
+            matches: [
+              {
+                id: 989799,
+                tournamentId: 3124,
+                stageName: "Playoffs",
+                roundName: "Quarterfinal",
+                status: "pending",
+                date: "2026-06-21T18:00:00.000Z",
+                map: "mirage_v2",
+                homeTeamId: 3742,
+                awayTeamId: trick.teamId,
+                homeTeam: { id: 3742, name: "BARBARIKI" },
+                awayTeam: { id: trick.teamId, name: "TRICK SIEBZEHN" }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    eos: [
+      {
+        id: 4112,
+        name: `Cyber X Series Season ${season}`,
+        status: "playing",
+        type: "series",
+        season,
+        tier: 3,
+        winnerId: null,
+        sponsor: "Cyber X",
+        teams: [
+          {
+            teamId: medics.teamId,
+            position: 5,
+            winsCount: 3,
+            drawsCount: 1,
+            lossesCount: 1,
+            points: 10,
+            roundDifference: 8,
+            team: {
+              id: medics.teamId,
+              name: medics.teamName,
+              logoUrl: medics.logoUrl,
+              communityTag: "BLZ"
+            }
+          }
+        ],
+        stages: [
+          {
+            id: 91001,
+            name: "Group stage",
+            status: "playing",
+            teams: [
+              {
+                teamId: medics.teamId,
+                position: 5,
+                gamesCount: 5,
+                winsCount: 3,
+                drawsCount: 1,
+                lossesCount: 1,
+                points: 10,
+                roundDifference: 8
+              }
+            ],
+            matches: [
+              {
+                id: 990112,
+                tournamentId: 4112,
+                stageName: "Group stage",
+                roundName: "Round 5",
+                status: "pending",
+                date: "2026-06-22T17:00:00.000Z",
+                map: "ancient_v2",
+                homeTeamId: medics.teamId,
+                awayTeamId: 4969,
+                homeTeam: { id: medics.teamId, name: medics.teamName },
+                awayTeam: { id: 4969, name: "Fallen Angels" }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+}
+
 
 function getCommunityDemoData() {
   return {
@@ -4105,6 +4298,599 @@ function getLadderEntryArray(rawData) {
     "result.teams"
   ]) || findArrayByEntryShape(rawData, isLadderEntryLike) || [];
 }
+
+function getCommunityTournamentCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(COMMUNITY_TOURNAMENT_CACHE_KEY));
+    return cached && typeof cached === "object" ? cached : {};
+  } catch {
+    return {};
+  }
+}
+
+function getFreshCommunityTournamentCacheEntry(key) {
+  const entry = getCommunityTournamentCache()[key];
+  const cacheIsFresh = entry?.timestamp && Date.now() - entry.timestamp < COMMUNITY_TOURNAMENT_CACHE_MAX_AGE_MS;
+  return cacheIsFresh ? entry.payload : null;
+}
+
+function setCommunityTournamentCacheEntry(key, payload) {
+  const cached = getCommunityTournamentCache();
+  cached[key] = {
+    timestamp: Date.now(),
+    payload
+  };
+  localStorage.setItem(COMMUNITY_TOURNAMENT_CACHE_KEY, JSON.stringify(cached));
+}
+
+function resolveSvelteIndex(root, index, seen) {
+  if (seen.has(index)) return seen.get(index);
+
+  const value = root[index];
+  if (value === -1) return null;
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const placeholder = Array.isArray(value) ? [] : {};
+  seen.set(index, placeholder);
+  const resolved = resolveSvelteValue(root, value, seen);
+  seen.set(index, resolved);
+  return resolved;
+}
+
+function resolveSvelteValue(root, value, seen = new Map()) {
+  if (value === -1) return null;
+
+  if (Number.isInteger(value) && value >= 0 && value < root.length) {
+    return resolveSvelteIndex(root, value, seen);
+  }
+
+  if (Array.isArray(value)) {
+    if (value[0] === "Date") {
+      return value[1] || null;
+    }
+
+    return value.map(item => resolveSvelteValue(root, item, seen));
+  }
+
+  if (!value || typeof value !== "object") return value;
+
+  const result = {};
+  Object.entries(value).forEach(([key, child]) => {
+    result[key] = resolveSvelteValue(root, child, seen);
+  });
+  return result;
+}
+
+function getDecodedSvelteDataRoots(rawData) {
+  const roots = [];
+  const nodes = Array.isArray(rawData?.nodes) ? rawData.nodes : [];
+
+  nodes.forEach(node => {
+    if (Array.isArray(node?.data)) {
+      roots.push(resolveSvelteIndex(node.data, 0, new Map()));
+    }
+  });
+
+  return roots.length ? roots : [rawData];
+}
+
+function isTournamentLikeObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const id = toFiniteNumberOrNull(value.id ?? value.tournamentId);
+  if (id === null) return false;
+
+  const signals = [
+    value.name,
+    value.season,
+    value.type,
+    value.status,
+    value.tier,
+    value.sponsor,
+    value.format,
+    value.logoUrl,
+    value.teams,
+    value.participants,
+    value.winnerId,
+    value.maxSlots
+  ].filter(value => value !== undefined && value !== null && value !== "").length;
+
+  return Boolean(value.name) && signals >= 3 && !("userId" in value && !("season" in value));
+}
+
+function collectTournamentObjects(value, results = [], visited = new WeakSet()) {
+  if (!value || typeof value !== "object" || visited.has(value)) return results;
+  visited.add(value);
+
+  if (isTournamentLikeObject(value)) {
+    results.push(value);
+  }
+
+  const children = Array.isArray(value) ? value : Object.values(value);
+  children.forEach(child => collectTournamentObjects(child, results, visited));
+  return results;
+}
+
+function uniqueTournamentSummaries(tournaments, season = null) {
+  const seen = new Set();
+
+  return tournaments
+    .map(tournament => ({
+      id: toFiniteNumberOrNull(tournament.tournamentId ?? tournament.id),
+      name: tournament.name || "",
+      season: toFiniteNumberOrNull(tournament.season),
+      type: tournament.type || "",
+      tier: toFiniteNumberOrNull(tournament.tier),
+      status: tournament.status || "",
+      sponsor: tournament.sponsor || "",
+      logoUrl: tournament.logoUrl || ""
+    }))
+    .filter(tournament => {
+      if (tournament.id === null) return false;
+      if (season !== null && tournament.season !== null && tournament.season !== season) return false;
+      if (seen.has(tournament.id)) return false;
+      seen.add(tournament.id);
+      return true;
+    });
+}
+
+function extractTournamentSummariesFromData(data, season = null) {
+  const roots = getDecodedSvelteDataRoots(data);
+  const tournaments = roots.flatMap(root => collectTournamentObjects(root));
+  return uniqueTournamentSummaries(tournaments, season);
+}
+
+function extractTournamentIdsFromChampionshipData(data) {
+  return extractTournamentSummariesFromData(data).map(tournament => tournament.id);
+}
+
+function extractTournamentIdsFromOfficialData(data, season) {
+  return extractTournamentSummariesFromData(data, season).map(tournament => tournament.id);
+}
+
+function sanitizePublicTeam(rawTeam, fallbackTeamId = null) {
+  const teamId = toFiniteNumberOrNull(firstDefined(rawTeam, ["id", "teamId"])) ?? toFiniteNumberOrNull(fallbackTeamId);
+  if (teamId === null) return null;
+
+  const name = firstDefined(rawTeam, ["name", "teamName"]) || `Team ${teamId}`;
+  const logoFileName = firstDefined(rawTeam, ["logoUrl", "logo", "logoFileName"]);
+
+  return {
+    teamId,
+    teamName: name,
+    logoUrl: buildTeamLogoUrl(teamId, logoFileName),
+    communityTag: firstDefined(rawTeam, ["communityTag"]),
+    ranking: toFiniteNumberOrNull(firstDefined(rawTeam, ["ranking"])),
+    tier: toFiniteNumberOrNull(firstDefined(rawTeam, ["tier"]))
+  };
+}
+
+function sanitizeTournamentTeamEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== "object") return null;
+
+  const teamId = toFiniteNumberOrNull(firstDefined(rawEntry, ["teamId", "team.id"]));
+  if (teamId === null) return null;
+
+  const publicTeam = sanitizePublicTeam(rawEntry.team || rawEntry, teamId);
+
+  return {
+    teamId,
+    position: toFiniteNumberOrNull(firstDefined(rawEntry, ["position", "rank"])),
+    gamesCount: toFiniteNumberOrNull(firstDefined(rawEntry, ["gamesCount", "games"])),
+    winsCount: toFiniteNumberOrNull(firstDefined(rawEntry, ["winsCount", "wins"])),
+    drawsCount: toFiniteNumberOrNull(firstDefined(rawEntry, ["drawsCount", "draws"])),
+    lossesCount: toFiniteNumberOrNull(firstDefined(rawEntry, ["lossesCount", "losses"])),
+    points: toFiniteNumberOrNull(firstDefined(rawEntry, ["points"])),
+    roundDifference: toFiniteNumberOrNull(firstDefined(rawEntry, ["roundDifference", "roundDiff"])),
+    team: publicTeam
+  };
+}
+
+function getTeamNameFromMatchSide(rawMatch, side) {
+  return firstDefined(rawMatch, [
+    `${side}Team.name`,
+    `${side}.name`,
+    `${side}TeamName`
+  ]);
+}
+
+function isMatchLikeObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const id = toFiniteNumberOrNull(value.id ?? value.matchId);
+  const homeTeamId = toFiniteNumberOrNull(firstDefined(value, ["homeTeamId", "team1Id", "homeTeam.id"]));
+  const awayTeamId = toFiniteNumberOrNull(firstDefined(value, ["awayTeamId", "team2Id", "awayTeam.id"]));
+
+  return id !== null && homeTeamId !== null && awayTeamId !== null;
+}
+
+function normalizeTournamentMatch(rawMatch, context = {}) {
+  const id = toFiniteNumberOrNull(rawMatch.id ?? rawMatch.matchId);
+  if (id === null) return null;
+
+  const homeTeamId = toFiniteNumberOrNull(firstDefined(rawMatch, ["homeTeamId", "team1Id", "homeTeam.id"]));
+  const awayTeamId = toFiniteNumberOrNull(firstDefined(rawMatch, ["awayTeamId", "team2Id", "awayTeam.id"]));
+  if (homeTeamId === null || awayTeamId === null) return null;
+
+  const homeScore = toFiniteNumberOrNull(firstDefined(rawMatch, ["homeTeamRounds", "homeScore", "team1Rounds", "scoreHome"]));
+  const awayScore = toFiniteNumberOrNull(firstDefined(rawMatch, ["awayTeamRounds", "awayScore", "team2Rounds", "scoreAway"]));
+  const winnerId = toFiniteNumberOrNull(firstDefined(rawMatch, ["winnerId"]));
+
+  return {
+    id,
+    stageName: firstDefined(rawMatch, ["stageName", "stage.name"]) || context.stageName || "",
+    stageStatus: context.stageStatus || "",
+    roundName: firstDefined(rawMatch, ["roundName", "round.name"]) || context.roundName || "",
+    roundOrder: toFiniteNumberOrNull(firstDefined(rawMatch, ["roundOrder", "round.order"])) ?? context.roundOrder ?? null,
+    status: firstDefined(rawMatch, ["status"]) || "",
+    map: firstDefined(rawMatch, ["map"]) || "",
+    date: firstDefined(rawMatch, ["date", "startsAt", "startDate"]) || "",
+    homeTeamId,
+    awayTeamId,
+    homeTeamName: getTeamNameFromMatchSide(rawMatch, "home") || `Team ${homeTeamId}`,
+    awayTeamName: getTeamNameFromMatchSide(rawMatch, "away") || `Team ${awayTeamId}`,
+    homeScore,
+    awayScore,
+    winnerId: winnerId ?? deriveWinnerIdFromScore(homeTeamId, awayTeamId, homeScore, awayScore)
+  };
+}
+
+function deriveWinnerIdFromScore(homeTeamId, awayTeamId, homeScore, awayScore) {
+  if (homeScore === null || awayScore === null || homeScore === awayScore) return null;
+  return homeScore > awayScore ? homeTeamId : awayTeamId;
+}
+
+function collectMatchesFromValue(value, context = {}, results = [], visited = new WeakSet()) {
+  if (!value || typeof value !== "object" || visited.has(value)) return results;
+  visited.add(value);
+
+  if (isMatchLikeObject(value)) {
+    const match = normalizeTournamentMatch(value, context);
+    if (match) results.push(match);
+    return results;
+  }
+
+  const nextContext = { ...context };
+  if (firstDefined(value, ["name"]) && (Array.isArray(value.matches) || Array.isArray(value.rounds))) {
+    nextContext.roundName = value.name;
+    nextContext.roundOrder = toFiniteNumberOrNull(firstDefined(value, ["order", "position", "number"]));
+  }
+
+  const children = Array.isArray(value) ? value : Object.values(value);
+  children.forEach(child => collectMatchesFromValue(child, nextContext, results, visited));
+  return results;
+}
+
+function sanitizeTournamentStage(rawStage, index = 0) {
+  const stageName = firstDefined(rawStage, ["name"]) || `Stage ${index + 1}`;
+  const stageStatus = firstDefined(rawStage, ["status"]) || "";
+  const matches = collectMatchesFromValue(rawStage, {
+    stageName,
+    stageStatus,
+    roundName: "",
+    roundOrder: index
+  });
+  const uniqueMatches = Array.from(new Map(matches.map(match => [String(match.id), match])).values());
+
+  return {
+    id: toFiniteNumberOrNull(firstDefined(rawStage, ["id"])),
+    name: stageName,
+    status: stageStatus,
+    formatType: firstDefined(rawStage, ["formatType", "type"]) || "",
+    teams: Array.isArray(rawStage?.teams) ? rawStage.teams.map(sanitizeTournamentTeamEntry).filter(Boolean) : [],
+    matches: uniqueMatches
+  };
+}
+
+function sanitizeTournamentData(data) {
+  return {
+    id: toFiniteNumberOrNull(firstDefined(data, ["id", "tournamentId"])),
+    name: firstDefined(data, ["name"]) || "Tournament",
+    status: firstDefined(data, ["status"]) || "",
+    type: firstDefined(data, ["type"]) || "",
+    season: toFiniteNumberOrNull(firstDefined(data, ["season"])),
+    tier: toFiniteNumberOrNull(firstDefined(data, ["tier"])),
+    winnerId: toFiniteNumberOrNull(firstDefined(data, ["winnerId"])),
+    sponsor: firstDefined(data, ["sponsor"]) || "",
+    format: firstDefined(data, ["format"]) || "",
+    logoUrl: firstDefined(data, ["logoUrl"]) || "",
+    teams: Array.isArray(data?.teams) ? data.teams.map(sanitizeTournamentTeamEntry).filter(Boolean) : [],
+    stages: Array.isArray(data?.stages) ? data.stages.map(sanitizeTournamentStage).filter(Boolean) : []
+  };
+}
+
+async function fetchChampionshipTournaments(season, forceRefresh = false) {
+  const cacheKey = `championship:${season}`;
+  const cached = !forceRefresh ? getFreshCommunityTournamentCacheEntry(cacheKey) : null;
+  if (cached) return { ...cached, source: "cache" };
+
+  const data = await fetchJsonWithRetry(buildChampionshipDataUrl(season), {
+    headers: { "Accept": "application/json" }
+  }, "Championship tournament list");
+  const summaries = extractTournamentSummariesFromData(data, season).slice(0, COMMUNITY_TOURNAMENT_FETCH_LIMIT);
+  const payload = {
+    summaries,
+    tournamentIds: extractTournamentIdsFromChampionshipData(data).filter(id => summaries.some(tournament => tournament.id === id))
+  };
+  setCommunityTournamentCacheEntry(cacheKey, payload);
+  return { ...payload, source: "api" };
+}
+
+async function fetchOfficialTournaments(season, forceRefresh = false) {
+  const cacheKey = `official:${season}`;
+  const cached = !forceRefresh ? getFreshCommunityTournamentCacheEntry(cacheKey) : null;
+  if (cached) return { ...cached, source: "cache" };
+
+  const data = await fetchJsonWithRetry(buildOfficialTournamentsDataUrl(), {
+    headers: { "Accept": "application/json" }
+  }, "Official tournament list");
+  const summaries = extractTournamentSummariesFromData(data, season).slice(0, COMMUNITY_TOURNAMENT_FETCH_LIMIT);
+  const payload = {
+    summaries,
+    tournamentIds: extractTournamentIdsFromOfficialData(data, season).filter(id => summaries.some(tournament => tournament.id === id))
+  };
+  setCommunityTournamentCacheEntry(cacheKey, payload);
+  return { ...payload, source: "api" };
+}
+
+async function fetchTournamentDetails(tournamentId, forceRefresh = false) {
+  const cacheKey = `tournament:${tournamentId}`;
+  const cached = !forceRefresh ? getFreshCommunityTournamentCacheEntry(cacheKey) : null;
+  if (cached) return { ...cached, source: "cache" };
+
+  const data = await fetchJsonWithRetry(buildTournamentDetailDataUrl(tournamentId), {
+    headers: { "Accept": "application/json" }
+  }, `Tournament ${tournamentId}`);
+  const tournament = sanitizeTournamentData(data);
+  const payload = { tournament };
+  setCommunityTournamentCacheEntry(cacheKey, payload);
+  return { ...payload, source: "api" };
+}
+
+function getCommunityTournamentTeams() {
+  const teamsById = new Map();
+
+  function addTeam(team) {
+    const teamId = toFiniteNumberOrNull(team?.teamId ?? team?.id);
+    if (teamId === null || teamsById.has(String(teamId))) return;
+
+    teamsById.set(String(teamId), {
+      teamId,
+      teamName: team.teamName || team.name || `Team ${teamId}`,
+      logoUrl: team.logoUrl || "",
+      communityTag: team.communityTag || ""
+    });
+  }
+
+  communityStatsState.teams.forEach(addTeam);
+
+  const cached = getFreshCommunityStatsCache(
+    communityStatsState.seasonState?.season || getCurrentCplSeasonState().season,
+    communityStatsState.ladderId || getCurrentCplSeasonState().season + 36
+  );
+  if (cached?.communityData) {
+    normalizeCommunityTeams(cached.communityData).forEach(addTeam);
+  }
+
+  COMMUNITY_DEMO_TEAMS
+    .filter(team => COMMUNITY_FALLBACK_TEAM_IDS.includes(Number(team.teamId)))
+    .forEach(addTeam);
+
+  return [...teamsById.values()];
+}
+
+function tournamentHasTeam(tournament, teamId) {
+  const id = String(teamId);
+  if (tournament.teams.some(team => String(team.teamId) === id)) return true;
+
+  return tournament.stages.some(stage => (
+    stage.teams.some(team => String(team.teamId) === id) ||
+    stage.matches.some(match => String(match.homeTeamId) === id || String(match.awayTeamId) === id)
+  ));
+}
+
+function findCommunityTeamsInTournament(tournament, communityTeams) {
+  return communityTeams.filter(team => tournamentHasTeam(tournament, team.teamId));
+}
+
+function getTournamentTeamEntries(tournament, teamId) {
+  const id = String(teamId);
+  const entries = [];
+
+  tournament.teams.forEach(team => {
+    if (String(team.teamId) === id) {
+      entries.push({
+        ...team,
+        stageName: "",
+        stageStatus: ""
+      });
+    }
+  });
+
+  tournament.stages.forEach(stage => {
+    stage.teams.forEach(team => {
+      if (String(team.teamId) === id) {
+        entries.push({
+          ...team,
+          stageName: stage.name,
+          stageStatus: stage.status
+        });
+      }
+    });
+  });
+
+  return entries;
+}
+
+function getBestTournamentTeamEntry(tournament, teamId) {
+  const entries = getTournamentTeamEntries(tournament, teamId);
+  return entries.find(entry => entry.stageName) || entries[0] || null;
+}
+
+function extractMatchesForTeam(tournament, teamId) {
+  const id = String(teamId);
+  const matches = [];
+
+  tournament.stages.forEach(stage => {
+    stage.matches.forEach(match => {
+      if (String(match.homeTeamId) === id || String(match.awayTeamId) === id) {
+        matches.push({
+          ...match,
+          stageName: match.stageName || stage.name,
+          stageStatus: match.stageStatus || stage.status
+        });
+      }
+    });
+  });
+
+  return Array.from(new Map(matches.map(match => [String(match.id), match])).values())
+    .sort(compareTournamentMatches);
+}
+
+function compareTournamentMatches(a, b) {
+  const dateA = Date.parse(a.date || "");
+  const dateB = Date.parse(b.date || "");
+  if (Number.isFinite(dateA) && Number.isFinite(dateB) && dateA !== dateB) return dateA - dateB;
+  if (Number.isFinite(dateA)) return -1;
+  if (Number.isFinite(dateB)) return 1;
+
+  const roundSort = compareNullableNumbers(a.roundOrder, b.roundOrder, "asc");
+  if (roundSort !== 0) return roundSort;
+
+  return compareNullableNumbers(a.id, b.id, "asc");
+}
+
+function getMatchBucket(match) {
+  const status = normalizeSearchValue(match.status);
+  const hasScore = match.homeScore !== null && match.awayScore !== null;
+  const dateValue = Date.parse(match.date || "");
+
+  if (status.includes("live") || status.includes("playing") || status.includes("progress")) return "live";
+  if (status.includes("processed") || status.includes("finished") || hasScore) return "played";
+  if (Number.isFinite(dateValue) && dateValue > Date.now()) return "upcoming";
+  if (status.includes("pending") || status.includes("scheduled") || status.includes("queued")) return "upcoming";
+  return "unknown";
+}
+
+function groupTournamentMatches(matches) {
+  return {
+    live: matches.filter(match => getMatchBucket(match) === "live"),
+    upcoming: matches.filter(match => getMatchBucket(match) === "upcoming"),
+    played: matches.filter(match => getMatchBucket(match) === "played"),
+    unknown: matches.filter(match => getMatchBucket(match) === "unknown")
+  };
+}
+
+function deriveTournamentStatus(team, tournament, matches) {
+  const teamId = toFiniteNumberOrNull(team.teamId);
+  if (teamId !== null && tournament.winnerId === teamId) return "Winner";
+
+  const buckets = groupTournamentMatches(matches);
+  if (buckets.live.length) return "Live";
+
+  const finalPending = buckets.upcoming.some(match => normalizeSearchValue(`${match.stageName} ${match.roundName}`).includes("final"));
+  if (finalPending) return "Finalist";
+
+  if (buckets.upcoming.length) return "Upcoming match";
+
+  const playedMatches = [...buckets.played].sort(compareTournamentMatches);
+  const lastPlayed = playedMatches.length ? playedMatches[playedMatches.length - 1] : null;
+  if (lastPlayed && lastPlayed.winnerId !== null && teamId !== null && lastPlayed.winnerId !== teamId) {
+    const phase = normalizeSearchValue(`${lastPlayed.stageName} ${lastPlayed.roundName}`);
+    if (phase.includes("playoff") || phase.includes("final") || phase.includes("semi") || phase.includes("quarter")) {
+      return "Eliminated";
+    }
+  }
+
+  if (normalizeSearchValue(tournament.status).includes("finished") && teamId !== null && tournament.winnerId !== teamId) {
+    return "Eliminated";
+  }
+
+  return "Unknown";
+}
+
+function getTournamentCategory(tournament, group) {
+  if (group === "championship") {
+    return tournament.type || inferTournamentCategoryFromName(tournament.name);
+  }
+
+  return tournament.type || "official";
+}
+
+function inferTournamentCategoryFromName(name) {
+  const normalized = normalizeSearchValue(name);
+  if (normalized.includes("contenders")) return "contenders";
+  if (normalized.includes("challengers")) return "challengers";
+  if (normalized.includes("legends")) return "legends";
+  if (normalized.includes("championship")) return "championship";
+  return "";
+}
+
+function formatTournamentRecord(entry) {
+  if (!entry) return "-";
+  const wins = toFiniteNumberOrNull(entry.winsCount);
+  const draws = toFiniteNumberOrNull(entry.drawsCount);
+  const losses = toFiniteNumberOrNull(entry.lossesCount);
+  const points = toFiniteNumberOrNull(entry.points);
+  const roundDifference = toFiniteNumberOrNull(entry.roundDifference);
+  const parts = [];
+
+  if (wins !== null || draws !== null || losses !== null) {
+    parts.push(`${wins ?? 0}-${draws ?? 0}-${losses ?? 0}`);
+  }
+  if (points !== null) parts.push(`${points} pts`);
+  if (roundDifference !== null) parts.push(`RD ${roundDifference > 0 ? "+" : ""}${roundDifference}`);
+
+  return parts.length ? parts.join(" / ") : "-";
+}
+
+function buildTournamentItems(tournaments, communityTeams, group, summaries = []) {
+  const summaryById = new Map(summaries.map(summary => [String(summary.id), summary]));
+  const items = [];
+
+  tournaments.forEach(tournament => {
+    const summary = summaryById.get(String(tournament.id)) || {};
+    const matchingTeams = findCommunityTeamsInTournament(tournament, communityTeams);
+
+    matchingTeams.forEach(team => {
+      const teamEntry = getBestTournamentTeamEntry(tournament, team.teamId);
+      const teamIdentityEntry = getTournamentTeamEntries(tournament, team.teamId)
+        .find(entry => entry.team?.teamName && entry.team.teamName !== `Team ${team.teamId}`);
+      const matches = extractMatchesForTeam(tournament, team.teamId);
+      const tournamentCategory = getTournamentCategory({ ...summary, ...tournament }, group);
+      const tier = tournament.tier ?? summary.tier ?? null;
+
+      items.push({
+        group,
+        team: {
+          ...team,
+          teamName: teamIdentityEntry?.team?.teamName || team.teamName,
+          logoUrl: teamIdentityEntry?.team?.logoUrl || team.logoUrl
+        },
+        tournament: {
+          id: tournament.id,
+          name: tournament.name || summary.name || "Tournament",
+          status: tournament.status || summary.status || "",
+          type: tournamentCategory,
+          tier,
+          winnerId: tournament.winnerId
+        },
+        stageName: teamEntry?.stageName || matches.find(match => match.stageName)?.stageName || "",
+        stageStatus: teamEntry?.stageStatus || matches.find(match => match.stageStatus)?.stageStatus || "",
+        position: teamEntry?.position ?? null,
+        record: formatTournamentRecord(teamEntry),
+        derivedStatus: deriveTournamentStatus(team, tournament, matches),
+        matches,
+        matchBuckets: groupTournamentMatches(matches)
+      });
+    });
+  });
+
+  return items;
+}
+
+
 
 function buildTeamLogoUrl(teamId, logoFileName) {
   const cleanLogo = String(logoFileName ?? "").trim();
@@ -4593,7 +5379,7 @@ function renderCommunityPlayersTable() {
   const players = getFilteredCommunityPlayers();
 
   if (!players.length) {
-    body.innerHTML = `<tr><td colspan="9">${communityStatsState.loaded ? "No community players match the current filters." : "No ranking data loaded yet."}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10">${communityStatsState.loaded ? "No community players match the current filters." : "No ranking data loaded yet."}</td></tr>`;
     return;
   }
 
@@ -4614,14 +5400,10 @@ function renderCommunityPlayersTable() {
 
     return `
       <tr>
-        <td>
-          <span class="community-player-ranks">
-            <span title="Global ranking">${player.rank === null ? "-" : `#${formatCommunityNumber(player.rank)}`}</span>
-            <span class="community-player-rank-local" title="Community ranking">C#${formatCommunityNumber(player.communityRank)}</span>
-          </span>
-        </td>
-        <td><strong>${nickHtml}</strong></td>
+        <td>${formatCommunityNumber(player.communityRank)}</td>
+        <td>${player.rank === null ? "-" : `#${formatCommunityNumber(player.rank)}`}</td>
         <td>${teamLogoHtml}</td>
+        <td><strong>${nickHtml}</strong></td>
         <td>${formatCommunityNumber(player.games)}</td>
         <td>${formatCommunityDecimal(player.kdRatio)}</td>
         <td>${formatCommunityPercentage(player.hsPercentage)}</td>
@@ -4631,6 +5413,284 @@ function renderCommunityPlayersTable() {
       </tr>
     `;
   }).join("");
+}
+
+function formatTournamentLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) return "-";
+  return text
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatTournamentDateTime(value) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function getAllTournamentItems() {
+  return [
+    ...communityTournamentState.championshipItems,
+    ...communityTournamentState.eosItems
+  ];
+}
+
+function getFilteredTournamentItems(group) {
+  const selectedTeamId = String(communityTournamentState.teamId || "");
+  const sourceItems = group === "championship"
+    ? communityTournamentState.championshipItems
+    : communityTournamentState.eosItems;
+
+  return sourceItems.filter(item => {
+    return !selectedTeamId || String(item.team.teamId) === selectedTeamId;
+  });
+}
+
+function renderCommunityTournamentTeamFilter() {
+  const select = document.getElementById("community-tournament-team-filter");
+  if (!select) return;
+
+  const teams = getAllTournamentItems()
+    .map(item => item.team)
+    .filter(Boolean);
+  const uniqueTeams = Array.from(new Map(teams.map(team => [String(team.teamId), team])).values())
+    .sort((a, b) => String(a.teamName || "").localeCompare(String(b.teamName || "")));
+  const currentValue = communityTournamentState.teamId || "";
+
+  select.innerHTML = `
+    <option value="">All teams</option>
+    ${uniqueTeams.map(team => `<option value="${escapeHtml(team.teamId)}">${escapeHtml(team.teamName)}</option>`).join("")}
+  `;
+
+  select.value = uniqueTeams.some(team => String(team.teamId) === String(currentValue)) ? String(currentValue) : "";
+  communityTournamentState.teamId = select.value;
+}
+
+function getActiveTournamentGroup() {
+  return communityTournamentState.view === "eos" ? "eos" : "championship";
+}
+
+function getActiveTournamentItems() {
+  return getFilteredTournamentItems(getActiveTournamentGroup());
+}
+
+function getTournamentGroupLabel(group = getActiveTournamentGroup()) {
+  return group === "eos" ? "End of Season" : "Championship";
+}
+
+function getTournamentDisplayName(item) {
+  const parts = [];
+  if (item.tournament.type) parts.push(formatTournamentLabel(item.tournament.type));
+  if (item.tournament.tier !== null && item.tournament.tier !== undefined) parts.push(`Tier ${item.tournament.tier}`);
+
+  return parts.length ? parts.join(" / ") : item.tournament.name;
+}
+
+function getOpponentForMatch(match, teamId) {
+  const id = String(teamId);
+  if (String(match.homeTeamId) === id) {
+    return {
+      teamId: match.awayTeamId,
+      teamName: match.awayTeamName || `Team ${match.awayTeamId}`
+    };
+  }
+
+  return {
+    teamId: match.homeTeamId,
+    teamName: match.homeTeamName || `Team ${match.homeTeamId}`
+  };
+}
+
+function getNextTournamentMatch(item) {
+  const candidates = [
+    ...item.matchBuckets.live,
+    ...item.matchBuckets.upcoming,
+    ...item.matchBuckets.unknown.filter(match => match.homeScore === null && match.awayScore === null)
+  ];
+
+  return candidates.sort(compareTournamentMatches)[0] || null;
+}
+
+function renderTeamLogoCell(team) {
+  const teamName = team.teamName || `Team ${team.teamId}`;
+  return team.logoUrl
+    ? `<img class="community-logo community-player-team-logo" src="${escapeHtml(team.logoUrl)}" alt="${escapeHtml(teamName)} logo" loading="lazy">`
+    : '<span class="community-empty-logo community-player-team-logo">-</span>';
+}
+
+function renderTournamentNextMatch(item) {
+  const match = getNextTournamentMatch(item);
+  if (!match) return "-";
+
+  const opponent = getOpponentForMatch(match, item.team.teamId);
+  const matchUrl = buildCplMatchUrl(match.id);
+  const dateText = formatTournamentDateTime(match.date);
+  const opponentText = `vs ${opponent.teamName}`;
+  const opponentHtml = matchUrl
+    ? `<a class="community-link" href="${escapeHtml(matchUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(opponentText)}</a>`
+    : escapeHtml(opponentText);
+
+  return `<span class="community-next-match"><span>${escapeHtml(dateText)}</span>${opponentHtml}</span>`;
+}
+
+function renderTournamentTeamRow(item) {
+  const teamUrl = buildCplTeamUrl(item.team.teamId);
+  const teamNameHtml = teamUrl
+    ? `<a class="community-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.team.teamName)}</a>`
+    : escapeHtml(item.team.teamName);
+  const position = item.position === null || item.position === undefined ? "-" : `#${formatCommunityNumber(item.position)}`;
+  const stageText = item.stageName || "-";
+  const statusText = item.derivedStatus && item.derivedStatus !== "Unknown"
+    ? item.derivedStatus
+    : formatTournamentLabel(item.stageStatus || item.tournament.status) || "-";
+
+  return `
+    <tr>
+      <td>${escapeHtml(position)}</td>
+      <td>${renderTeamLogoCell(item.team)}</td>
+      <td><strong>${teamNameHtml}</strong></td>
+      <td>${escapeHtml(getTournamentDisplayName(item))}</td>
+      <td>${escapeHtml(stageText)}</td>
+      <td>${escapeHtml(statusText)}</td>
+      <td>${escapeHtml(item.record)}</td>
+      <td>${renderTournamentNextMatch(item)}</td>
+    </tr>
+  `;
+}
+
+function getPlayedTournamentMatchRows(items) {
+  const seen = new Set();
+  const rows = [];
+
+  items.forEach(item => {
+    item.matchBuckets.played.forEach(match => {
+      const key = String(match.id);
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      rows.push({
+        item,
+        match,
+        opponent: getOpponentForMatch(match, item.team.teamId)
+      });
+    });
+  });
+
+  return rows.sort((a, b) => -compareTournamentMatches(a.match, b.match));
+}
+
+function renderPlayedTournamentMatchRow(row) {
+  const { item, match, opponent } = row;
+  const matchUrl = buildCplMatchUrl(match.id);
+  const score = match.homeScore !== null && match.awayScore !== null
+    ? `${formatCommunityNumber(match.homeScore)}:${formatCommunityNumber(match.awayScore)}`
+    : "-";
+  const opponentText = `vs ${opponent.teamName}`;
+  const opponentHtml = matchUrl
+    ? `<a class="community-link" href="${escapeHtml(matchUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(opponentText)}</a>`
+    : escapeHtml(opponentText);
+  const teamUrl = buildCplTeamUrl(item.team.teamId);
+  const teamHtml = teamUrl
+    ? `<a class="community-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.team.teamName)}</a>`
+    : escapeHtml(item.team.teamName);
+
+  return `
+    <tr>
+      <td>${escapeHtml(formatTournamentDateTime(match.date))}</td>
+      <td><strong>${teamHtml}</strong></td>
+      <td>${opponentHtml}</td>
+      <td>${escapeHtml(score)}</td>
+      <td>${escapeHtml(getTournamentDisplayName(item))}</td>
+      <td>${escapeHtml(match.stageName || match.roundName || "-")}</td>
+      <td>${escapeHtml(match.map || "-")}</td>
+    </tr>
+  `;
+}
+
+function renderTournamentTables() {
+  const teamBody = document.getElementById("community-tournament-teams-body");
+  const matchesBody = document.getElementById("community-tournament-matches-body");
+  const heading = document.getElementById("community-tournament-heading");
+  const group = getActiveTournamentGroup();
+  const items = getActiveTournamentItems();
+
+  if (heading) {
+    heading.textContent = getTournamentGroupLabel(group);
+  }
+
+  if (teamBody) {
+    teamBody.innerHTML = items.length
+      ? items.map(renderTournamentTeamRow).join("")
+      : `<tr><td colspan="8">${communityTournamentState.loaded ? `No community ${getTournamentGroupLabel(group)} entries match the current filters.` : "No tournament data loaded yet."}</td></tr>`;
+  }
+
+  if (matchesBody) {
+    const playedRows = getPlayedTournamentMatchRows(items);
+    matchesBody.innerHTML = playedRows.length
+      ? playedRows.map(renderPlayedTournamentMatchRow).join("")
+      : `<tr><td colspan="7">${communityTournamentState.loaded ? "No played matches for the current tournament view." : "No played matches loaded yet."}</td></tr>`;
+  }
+}
+
+function renderCommunityTournamentStatus() {
+  const status = document.getElementById("community-tournament-status");
+  const refreshButton = document.getElementById("community-tournament-refresh-button");
+
+  if (refreshButton) {
+    refreshButton.disabled = communityTournamentState.loading;
+    refreshButton.textContent = communityTournamentState.loading ? "Loading..." : "Refresh Tournament Data";
+  }
+
+  document.querySelectorAll("[data-community-tournament-view]").forEach(button => {
+    const active = button.dataset.communityTournamentView === communityTournamentState.view;
+    button.classList.toggle("active", active);
+  });
+
+  if (!status) return;
+
+  if (communityTournamentState.loading) {
+    status.className = "community-status community-status-loading";
+    status.textContent = communityTournamentState.warning || "Loading tournament data...";
+    return;
+  }
+
+  if (communityTournamentState.error) {
+    status.className = "community-status community-status-error";
+    status.textContent = communityTournamentState.error;
+    return;
+  }
+
+  if (communityTournamentState.warning) {
+    status.className = "community-status community-status-warning";
+    status.textContent = communityTournamentState.warning;
+    return;
+  }
+
+  if (communityTournamentState.loaded) {
+    const group = getActiveTournamentGroup();
+    const itemCount = getFilteredTournamentItems(group).length;
+    status.className = "community-status community-status-success";
+    status.textContent = `Showing ${itemCount} ${getTournamentGroupLabel(group)} community entries. Source: ${communityTournamentState.source || "-"}.`;
+    return;
+  }
+
+  status.className = "community-status";
+  status.textContent = "Tournament data not loaded yet.";
+}
+
+function renderCommunityTournaments() {
+  renderCommunityTournamentStatus();
+  renderCommunityTournamentTeamFilter();
+  renderTournamentTables();
 }
 
 function renderCommunityStatus() {
@@ -4684,6 +5744,18 @@ function renderCommunityStatus() {
   status.textContent = "Open Community to load current data.";
 }
 
+function renderCommunityPanelNavigation() {
+  document.querySelectorAll("[data-community-panel-target]").forEach(button => {
+    const active = button.dataset.communityPanelTarget === communityStatsState.activePanel;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+
+  document.querySelectorAll("[data-community-panel]").forEach(panel => {
+    panel.hidden = panel.dataset.communityPanel !== communityStatsState.activePanel;
+  });
+}
+
 function renderCommunityStats() {
   const playerSearch = document.getElementById("community-player-search");
 
@@ -4692,10 +5764,12 @@ function renderCommunityStats() {
   }
 
   renderCommunityStatus();
+  renderCommunityPanelNavigation();
   renderCommunityTeamSortButtons();
   renderCommunityTeamFilter();
   renderCommunityTeamsTable();
   renderCommunityPlayersTable();
+  renderCommunityTournaments();
 }
 
 function normalizeCommunityLoadOptions(options) {
@@ -4858,6 +5932,111 @@ async function loadCommunityStats(options = {}) {
   } finally {
     communityStatsState.loading = false;
     renderCommunityStats();
+
+    if (communityStatsState.loaded && !communityTournamentState.loaded && !communityTournamentState.loading) {
+      loadCommunityTournaments(false);
+    }
+  }
+}
+
+async function fetchTournamentDetailsForIds(tournamentIds, forceRefresh, warnings) {
+  const tournaments = [];
+  const sourceParts = [];
+
+  for (const tournamentId of tournamentIds.slice(0, COMMUNITY_TOURNAMENT_FETCH_LIMIT)) {
+    try {
+      const result = await fetchTournamentDetails(tournamentId, forceRefresh);
+      if (result.tournament?.id !== null) {
+        tournaments.push(result.tournament);
+        sourceParts.push(result.source);
+      }
+    } catch (error) {
+      console.warn("CPL tournament detail failed", { tournamentId, error });
+      warnings.push(`Tournament ${tournamentId} failed: ${error?.message || error}.`);
+    }
+  }
+
+  return {
+    tournaments,
+    source: sourceParts.includes("api") ? "api" : sourceParts.includes("cache") ? "cache" : ""
+  };
+}
+
+async function loadCommunityTournaments(forceRefresh = false) {
+  if (communityTournamentState.loading) return;
+
+  const seasonState = communityStatsState.seasonState || getCurrentCplSeasonState();
+  const season = seasonState.season;
+  const communityTeams = getCommunityTournamentTeams();
+
+  communityTournamentState.loading = true;
+  communityTournamentState.error = "";
+  communityTournamentState.warning = "Loading tournament data...";
+  communityTournamentState.season = season;
+  renderCommunityTournaments();
+
+  try {
+    const warnings = [];
+    const sourceParts = [];
+    const demoData = getCommunityDemoTournamentData(season);
+    let championshipTournaments = [];
+    let championshipSummaries = [];
+    let eosTournaments = [];
+    let eosSummaries = [];
+
+    try {
+      const championshipList = await fetchChampionshipTournaments(season, forceRefresh);
+      championshipSummaries = championshipList.summaries;
+      sourceParts.push(championshipList.source);
+      const detailResult = await fetchTournamentDetailsForIds(championshipList.tournamentIds, forceRefresh, warnings);
+      championshipTournaments = detailResult.tournaments;
+      if (detailResult.source) sourceParts.push(detailResult.source);
+    } catch (error) {
+      console.warn("CPL championship tournament data failed, using demo data", error);
+      championshipTournaments = demoData.championship.map(sanitizeTournamentData);
+      championshipSummaries = uniqueTournamentSummaries(demoData.championship, season);
+      sourceParts.push("demo");
+      warnings.push(`Championship data failed: ${error?.message || error}. Showing demo championship data.`);
+    }
+
+    try {
+      const officialList = await fetchOfficialTournaments(season, forceRefresh);
+      eosSummaries = officialList.summaries;
+      sourceParts.push(officialList.source);
+      const detailResult = await fetchTournamentDetailsForIds(officialList.tournamentIds, forceRefresh, warnings);
+      eosTournaments = detailResult.tournaments;
+      if (detailResult.source) sourceParts.push(detailResult.source);
+    } catch (error) {
+      console.warn("CPL official tournament data failed, using demo data", error);
+      eosTournaments = demoData.eos.map(sanitizeTournamentData);
+      eosSummaries = uniqueTournamentSummaries(demoData.eos, season);
+      sourceParts.push("demo");
+      warnings.push(`EOS data failed: ${error?.message || error}. Showing demo EOS data.`);
+    }
+
+    communityTournamentState.championshipItems = buildTournamentItems(championshipTournaments, communityTeams, "championship", championshipSummaries);
+    communityTournamentState.eosItems = buildTournamentItems(eosTournaments, communityTeams, "eos", eosSummaries);
+    communityTournamentState.source = sourceParts.includes("api")
+      ? "api"
+      : sourceParts.includes("cache")
+        ? "cache"
+        : sourceParts.includes("demo")
+          ? "demo"
+          : "";
+    communityTournamentState.loaded = true;
+    communityTournamentState.error = "";
+    communityTournamentState.warning = warnings.join(" ");
+    communityTournamentState.lastUpdated = new Date().toISOString();
+  } catch (error) {
+    console.error("CPL tournament overview failed", error);
+    communityTournamentState.loaded = false;
+    communityTournamentState.error = error?.message || "Tournament overview failed.";
+    communityTournamentState.warning = "";
+    communityTournamentState.championshipItems = [];
+    communityTournamentState.eosItems = [];
+  } finally {
+    communityTournamentState.loading = false;
+    renderCommunityTournaments();
   }
 }
 
@@ -4868,6 +6047,10 @@ function ensureCommunityStatsLoaded() {
   }
 
   renderCommunityStats();
+
+  if (!communityTournamentState.loaded && !communityTournamentState.loading) {
+    loadCommunityTournaments(false);
+  }
 }
 
 function setupCommunityStats() {
@@ -4886,6 +6069,30 @@ function setupCommunityStats() {
   document.getElementById("community-player-team-filter")?.addEventListener("change", event => {
     communityStatsState.playerTeamId = event.target.value || "";
     renderCommunityStats();
+  });
+
+  document.getElementById("community-tournament-refresh-button")?.addEventListener("click", () => {
+    loadCommunityTournaments(true);
+  });
+
+  document.querySelectorAll("[data-community-tournament-view]").forEach(button => {
+    button.addEventListener("click", () => {
+      communityTournamentState.view = button.dataset.communityTournamentView === "eos" ? "eos" : "championship";
+      renderCommunityTournaments();
+    });
+  });
+
+  document.getElementById("community-tournament-team-filter")?.addEventListener("change", event => {
+    communityTournamentState.teamId = event.target.value || "";
+    renderCommunityTournaments();
+  });
+
+  document.querySelectorAll("[data-community-panel-target]").forEach(button => {
+    button.addEventListener("click", () => {
+      const panel = button.dataset.communityPanelTarget || "tournaments";
+      communityStatsState.activePanel = ["teams", "players", "tournaments"].includes(panel) ? panel : "teams";
+      renderCommunityStats();
+    });
   });
 
   document.querySelectorAll("[data-community-team-sort]").forEach(button => {
