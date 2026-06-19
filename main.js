@@ -4522,6 +4522,7 @@ function normalizeTournamentMatch(rawMatch, context = {}) {
     stageName: firstDefined(rawMatch, ["stageName", "stage.name"]) || context.stageName || "",
     stageStatus: context.stageStatus || "",
     roundName: firstDefined(rawMatch, ["roundName", "round.name"]) || context.roundName || "",
+    roundStatus: context.roundStatus || "",
     roundOrder: toFiniteNumberOrNull(firstDefined(rawMatch, ["roundOrder", "round.order"])) ?? context.roundOrder ?? null,
     status: firstDefined(rawMatch, ["status"]) || "",
     map: firstDefined(rawMatch, ["map"]) || "",
@@ -4555,6 +4556,7 @@ function collectMatchesFromValue(value, context = {}, results = [], visited = ne
   if (firstDefined(value, ["name"]) && (Array.isArray(value.matches) || Array.isArray(value.rounds))) {
     nextContext.roundName = value.name;
     nextContext.roundOrder = toFiniteNumberOrNull(firstDefined(value, ["order", "position", "number"]));
+    nextContext.roundStatus = firstDefined(value, ["status"]) || "";
   }
 
   const children = Array.isArray(value) ? value : Object.values(value);
@@ -4725,7 +4727,7 @@ function getTournamentTeamEntries(tournament, teamId) {
 
 function getBestTournamentTeamEntry(tournament, teamId) {
   const entries = getTournamentTeamEntries(tournament, teamId);
-  return entries.find(entry => entry.stageName) || entries[0] || null;
+  return [...entries].reverse().find(entry => entry.stageName) || entries[0] || null;
 }
 
 function extractMatchesForTeam(tournament, teamId) {
@@ -4789,7 +4791,7 @@ function deriveTournamentStatus(team, tournament, matches) {
   const buckets = groupTournamentMatches(matches);
   if (buckets.live.length) return "Live";
 
-  const finalPending = buckets.upcoming.some(match => normalizeSearchValue(`${match.stageName} ${match.roundName}`).includes("final"));
+  const finalPending = buckets.upcoming.some(match => getKnockoutPositionLimit(match) === 2);
   if (finalPending) return "Finalist";
 
   if (buckets.upcoming.length) return "Upcoming match";
@@ -4798,7 +4800,7 @@ function deriveTournamentStatus(team, tournament, matches) {
   const lastPlayed = playedMatches.length ? playedMatches[playedMatches.length - 1] : null;
   if (lastPlayed && lastPlayed.winnerId !== null && teamId !== null && lastPlayed.winnerId !== teamId) {
     const phase = normalizeSearchValue(`${lastPlayed.stageName} ${lastPlayed.roundName}`);
-    if (phase.includes("playoff") || phase.includes("final") || phase.includes("semi") || phase.includes("quarter")) {
+    if (isKnockoutPhase(phase)) {
       return "Eliminated";
     }
   }
@@ -4812,10 +4814,16 @@ function deriveTournamentStatus(team, tournament, matches) {
 
 function getTournamentCategory(tournament, group) {
   if (group === "championship") {
-    return tournament.type || inferTournamentCategoryFromName(tournament.name);
+    const inferred = inferTournamentCategoryFromName(tournament.name);
+    if (inferred && inferred !== "championship") return inferred;
+    if (tournament.type && normalizeSearchValue(tournament.type) !== "championship") return tournament.type;
+    if (inferred === "championship" || normalizeSearchValue(tournament.type) === "championship") return "legends";
+    return inferred || tournament.type || "legends";
   }
 
-  return tournament.type || "official";
+  const officialName = inferOfficialTournamentCategory(tournament.name, tournament.tier);
+  if (officialName) return officialName;
+  return tournament.type && normalizeSearchValue(tournament.type) !== "official" ? tournament.type : "official";
 }
 
 function inferTournamentCategoryFromName(name) {
@@ -4827,22 +4835,121 @@ function inferTournamentCategoryFromName(name) {
   return "";
 }
 
+function inferOfficialTournamentCategory(name, tier) {
+  const normalized = normalizeSearchValue(name);
+  if (normalized.includes("luminous")) return "luminous";
+  if (normalized.includes("cyberathletes")) return "cyberathletes";
+  if (Number(tier) === 0) return "luminous";
+  if (Number(tier) === 1) return "cyberathletes";
+  return "";
+}
+
+function isKnockoutPhase(value) {
+  const phase = normalizeSearchValue(value);
+  return (
+    phase.includes("playoff") ||
+    phase.includes("final") ||
+    phase.includes("semi") ||
+    phase.includes("quarter") ||
+    phase.includes("round of")
+  );
+}
+
+function getRelevantTournamentMatch(matches) {
+  const buckets = groupTournamentMatches(matches);
+  const activeMatches = [...buckets.live, ...buckets.upcoming].sort(compareTournamentMatches);
+  if (activeMatches.length) return activeMatches[0];
+
+  const playedMatches = [...buckets.played].sort(compareTournamentMatches);
+  if (playedMatches.length) return playedMatches[playedMatches.length - 1];
+
+  const unknownMatches = [...buckets.unknown].sort(compareTournamentMatches);
+  return unknownMatches[unknownMatches.length - 1] || null;
+}
+
+function getKnockoutPositionLimit(match) {
+  if (!match || !isKnockoutPhase(`${match.stageName} ${match.roundName}`)) return null;
+
+  const phase = normalizeSearchValue(match.roundName || match.stageName);
+  if (phase.includes("semi")) return 4;
+  if (phase.includes("quarter")) return 8;
+
+  const roundMatch = phase.match(/round of\s+(\d+)/);
+  if (roundMatch) return Number(roundMatch[1]);
+
+  if (phase.includes("grand final") || phase === "final" || phase === "finals" || phase.endsWith(" final")) return 2;
+
+  return null;
+}
+
+function deriveTournamentPositionLabel(team, tournament, matches, teamEntry, statusText) {
+  const teamId = toFiniteNumberOrNull(team.teamId);
+  if (teamId !== null && tournament.winnerId === teamId) return "#1";
+
+  const relevantMatch = getRelevantTournamentMatch(matches);
+  const knockoutLimit = getKnockoutPositionLimit(relevantMatch);
+  if (knockoutLimit !== null) {
+    const buckets = groupTournamentMatches(matches);
+    const playedMatches = [...buckets.played].sort(compareTournamentMatches);
+    const lastPlayed = playedMatches[playedMatches.length - 1] || null;
+    const lostRelevantMatch = lastPlayed &&
+      relevantMatch &&
+      String(lastPlayed.id) === String(relevantMatch.id) &&
+      lastPlayed.winnerId !== null &&
+      teamId !== null &&
+      lastPlayed.winnerId !== teamId;
+
+    if (knockoutLimit === 2 && lostRelevantMatch) return "#2";
+    return `Top ${knockoutLimit}`;
+  }
+
+  if (normalizeSearchValue(statusText).includes("winner")) return "#1";
+
+  const position = toFiniteNumberOrNull(teamEntry?.position);
+  return position === null ? "-" : `#${formatCommunityNumber(position)}`;
+}
+
+function deriveTournamentStageLabel(teamEntry, matches) {
+  const relevantMatch = getRelevantTournamentMatch(matches);
+  if (relevantMatch && isKnockoutPhase(`${relevantMatch.stageName} ${relevantMatch.roundName}`)) {
+    return formatTournamentLabel(relevantMatch.roundName || relevantMatch.stageName);
+  }
+
+  return teamEntry?.stageName || relevantMatch?.stageName || "-";
+}
+
+function deriveTournamentStatusWithEntry(team, tournament, matches, teamEntry) {
+  const status = deriveTournamentStatus(team, tournament, matches);
+  if (status !== "Unknown") return status;
+
+  const hasLaterMatchThanEntry = teamEntry?.stageName
+    ? matches.some(match => match.stageName && match.stageName !== teamEntry.stageName)
+    : false;
+  const position = toFiniteNumberOrNull(teamEntry?.position);
+
+  if (
+    teamEntry?.stageName &&
+    !hasLaterMatchThanEntry &&
+    normalizeSearchValue(teamEntry.stageStatus).includes("finished")
+  ) {
+    if (position !== null && position > 1) return "Eliminated";
+    return "Finished";
+  }
+
+  return status;
+}
+
 function formatTournamentRecord(entry) {
   if (!entry) return "-";
   const wins = toFiniteNumberOrNull(entry.winsCount);
   const draws = toFiniteNumberOrNull(entry.drawsCount);
   const losses = toFiniteNumberOrNull(entry.lossesCount);
-  const points = toFiniteNumberOrNull(entry.points);
-  const roundDifference = toFiniteNumberOrNull(entry.roundDifference);
-  const parts = [];
 
   if (wins !== null || draws !== null || losses !== null) {
-    parts.push(`${wins ?? 0}-${draws ?? 0}-${losses ?? 0}`);
+    return `${wins ?? 0}W / ${draws ?? 0}D / ${losses ?? 0}L`;
   }
-  if (points !== null) parts.push(`${points} pts`);
-  if (roundDifference !== null) parts.push(`RD ${roundDifference > 0 ? "+" : ""}${roundDifference}`);
 
-  return parts.length ? parts.join(" / ") : "-";
+  return "-";
 }
 
 function buildTournamentItems(tournaments, communityTeams, group, summaries = []) {
@@ -4858,8 +4965,11 @@ function buildTournamentItems(tournaments, communityTeams, group, summaries = []
       const teamIdentityEntry = getTournamentTeamEntries(tournament, team.teamId)
         .find(entry => entry.team?.teamName && entry.team.teamName !== `Team ${team.teamId}`);
       const matches = extractMatchesForTeam(tournament, team.teamId);
-      const tournamentCategory = getTournamentCategory({ ...summary, ...tournament }, group);
       const tier = tournament.tier ?? summary.tier ?? null;
+      const tournamentCategory = getTournamentCategory({ ...summary, ...tournament, tier }, group);
+      const derivedStatus = deriveTournamentStatusWithEntry(team, tournament, matches, teamEntry);
+      const stageName = deriveTournamentStageLabel(teamEntry, matches);
+      const positionLabel = deriveTournamentPositionLabel(team, tournament, matches, teamEntry, derivedStatus);
 
       items.push({
         group,
@@ -4876,11 +4986,12 @@ function buildTournamentItems(tournaments, communityTeams, group, summaries = []
           tier,
           winnerId: tournament.winnerId
         },
-        stageName: teamEntry?.stageName || matches.find(match => match.stageName)?.stageName || "",
+        stageName,
         stageStatus: teamEntry?.stageStatus || matches.find(match => match.stageStatus)?.stageStatus || "",
         position: teamEntry?.position ?? null,
+        positionLabel,
         record: formatTournamentRecord(teamEntry),
-        derivedStatus: deriveTournamentStatus(team, tournament, matches),
+        derivedStatus,
         matches,
         matchBuckets: groupTournamentMatches(matches)
       });
@@ -5489,8 +5600,12 @@ function getTournamentGroupLabel(group = getActiveTournamentGroup()) {
 
 function getTournamentDisplayName(item) {
   const parts = [];
-  if (item.tournament.type) parts.push(formatTournamentLabel(item.tournament.type));
-  if (item.tournament.tier !== null && item.tournament.tier !== undefined) parts.push(`Tier ${item.tournament.tier}`);
+  const type = normalizeSearchValue(item.tournament.type);
+
+  if (item.tournament.type && type !== "official") parts.push(formatTournamentLabel(item.tournament.type));
+  if (item.group === "eos" && item.tournament.tier !== null && item.tournament.tier !== undefined) {
+    parts.push(`Tier ${item.tournament.tier}`);
+  }
 
   return parts.length ? parts.join(" / ") : item.tournament.name;
 }
@@ -5534,12 +5649,15 @@ function renderTournamentNextMatch(item) {
   const opponent = getOpponentForMatch(match, item.team.teamId);
   const matchUrl = buildCplMatchUrl(match.id);
   const dateText = formatTournamentDateTime(match.date);
+  const metaText = match.map && dateText !== "-"
+    ? `${dateText} · ${match.map}`
+    : match.map || dateText;
   const opponentText = `vs ${opponent.teamName}`;
   const opponentHtml = matchUrl
     ? `<a class="community-link" href="${escapeHtml(matchUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(opponentText)}</a>`
     : escapeHtml(opponentText);
 
-  return `<span class="community-next-match"><span>${escapeHtml(dateText)}</span>${opponentHtml}</span>`;
+  return `<span class="community-next-match"><span>${escapeHtml(metaText)}</span>${opponentHtml}</span>`;
 }
 
 function renderTournamentTeamRow(item) {
@@ -5547,7 +5665,7 @@ function renderTournamentTeamRow(item) {
   const teamNameHtml = teamUrl
     ? `<a class="community-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.team.teamName)}</a>`
     : escapeHtml(item.team.teamName);
-  const position = item.position === null || item.position === undefined ? "-" : `#${formatCommunityNumber(item.position)}`;
+  const position = item.positionLabel || (item.position === null || item.position === undefined ? "-" : `#${formatCommunityNumber(item.position)}`);
   const stageText = item.stageName || "-";
   const statusText = item.derivedStatus && item.derivedStatus !== "Unknown"
     ? item.derivedStatus
@@ -5591,8 +5709,8 @@ function getPlayedTournamentMatchRows(items) {
 function renderPlayedTournamentMatchRow(row) {
   const { item, match, opponent } = row;
   const matchUrl = buildCplMatchUrl(match.id);
-  const score = match.homeScore !== null && match.awayScore !== null
-    ? `${formatCommunityNumber(match.homeScore)}:${formatCommunityNumber(match.awayScore)}`
+  const scoreHtml = match.homeScore !== null && match.awayScore !== null
+    ? `<span class="community-score"><span>${formatCommunityNumber(match.homeScore)}</span><span>:</span><span>${formatCommunityNumber(match.awayScore)}</span></span>`
     : "-";
   const opponentText = `vs ${opponent.teamName}`;
   const opponentHtml = matchUrl
@@ -5608,7 +5726,7 @@ function renderPlayedTournamentMatchRow(row) {
       <td>${escapeHtml(formatTournamentDateTime(match.date))}</td>
       <td><strong>${teamHtml}</strong></td>
       <td>${opponentHtml}</td>
-      <td>${escapeHtml(score)}</td>
+      <td>${scoreHtml}</td>
       <td>${escapeHtml(getTournamentDisplayName(item))}</td>
       <td>${escapeHtml(match.stageName || match.roundName || "-")}</td>
       <td>${escapeHtml(match.map || "-")}</td>

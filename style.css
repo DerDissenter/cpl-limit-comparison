@@ -293,7 +293,7 @@ h2 {
 .community-tournament-matches-table th:nth-child(4),
 .community-tournament-matches-table td:nth-child(4) {
   width: 64px;
-  text-align: right;
+  text-align: center;
 }
 
 .community-tournament-matches-table th:nth-child(5),
@@ -334,6 +334,23 @@ h2 {
 .community-next-match span:first-child {
   color: rgba(255, 248, 201, 0.58);
   font-size: 10px;
+}
+
+.community-score {
+  display: inline-grid;
+  grid-template-columns: 1.4em auto 1.4em;
+  gap: 2px;
+  justify-content: center;
+  min-width: 46px;
+  font-variant-numeric: tabular-nums;
+}
+
+.community-score span:first-child {
+  text-align: right;
+}
+
+.community-score span:last-child {
+  text-align: left;
 }
 
 .community-section-header label {
