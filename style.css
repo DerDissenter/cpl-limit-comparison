@@ -324,6 +324,39 @@ h2 {
   vertical-align: middle;
 }
 
+.community-tournament-row-eliminated td {
+  opacity: 0.58;
+}
+
+.community-tournament-row-eliminated .community-logo,
+.community-tournament-row-eliminated .community-empty-logo {
+  filter: grayscale(0.55);
+}
+
+.community-match-outcome-win td {
+  background: rgba(45, 138, 78, 0.1);
+}
+
+.community-match-outcome-draw td {
+  background: rgba(255, 207, 112, 0.09);
+}
+
+.community-match-outcome-loss td {
+  background: rgba(184, 55, 55, 0.1);
+}
+
+.community-match-outcome-win td:first-child {
+  box-shadow: inset 3px 0 #86e39f;
+}
+
+.community-match-outcome-draw td:first-child {
+  box-shadow: inset 3px 0 #ffcf70;
+}
+
+.community-match-outcome-loss td:first-child {
+  box-shadow: inset 3px 0 #ff9a9a;
+}
+
 .community-next-match {
   display: grid;
   gap: 2px;

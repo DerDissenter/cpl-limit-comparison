@@ -222,6 +222,10 @@ const communityStatsState = {
   players: [],
   playerSearch: "",
   playerTeamId: "",
+  playerSort: {
+    key: "rank",
+    direction: "asc"
+  },
   teamSort: {
     key: "ranking",
     direction: "asc"
@@ -4904,6 +4908,7 @@ function deriveTournamentPositionLabel(team, tournament, matches, teamEntry, sta
   }
 
   if (normalizeSearchValue(statusText).includes("winner")) return "#1";
+  if (normalizeSearchValue(statusText).includes("eliminated")) return ">16";
 
   const position = toFiniteNumberOrNull(teamEntry?.position);
   return position === null ? "-" : `#${formatCommunityNumber(position)}`;
@@ -4946,7 +4951,7 @@ function formatTournamentRecord(entry) {
   const losses = toFiniteNumberOrNull(entry.lossesCount);
 
   if (wins !== null || draws !== null || losses !== null) {
-    return `${wins ?? 0}W / ${draws ?? 0}D / ${losses ?? 0}L`;
+    return `${wins ?? 0}-${draws ?? 0}-${losses ?? 0}`;
   }
 
   return "-";
@@ -5388,6 +5393,7 @@ function getFilteredCommunityTeams() {
 function getFilteredCommunityPlayers() {
   const search = normalizeSearchValue(communityStatsState.playerSearch);
   const selectedTeamId = String(communityStatsState.playerTeamId || "");
+  const { key, direction } = communityStatsState.playerSort;
 
   return [...communityStatsState.players]
     .filter(player => {
@@ -5398,16 +5404,13 @@ function getFilteredCommunityPlayers() {
       return matchesTeam && matchesSearch;
     })
     .sort((a, b) => {
+      const primarySort = compareNullableNumbers(a[key], b[key], direction);
+      if (primarySort !== 0) return primarySort;
+
       const rankSort = compareNullableNumbers(a.rank, b.rank, "asc");
       if (rankSort !== 0) return rankSort;
 
-      const kdSort = compareNullableNumbers(a.kdRatio, b.kdRatio, "desc");
-      if (kdSort !== 0) return kdSort;
-
-      const killSort = compareNullableNumbers(a.kills, b.kills, "desc");
-      if (killSort !== 0) return killSort;
-
-      return String(a.name || "").localeCompare(String(b.name || ""));
+      return String(a.nick || a.name || "").localeCompare(String(b.nick || b.name || ""));
     });
 }
 
@@ -5421,6 +5424,22 @@ function renderCommunityTeamSortButtons() {
     button.classList.toggle("active", active);
     button.textContent = `${baseText}${active ? ` (${communityStatsState.teamSort.direction})` : ""}`;
   });
+}
+
+function renderCommunityPlayerSortButtons() {
+  document.querySelectorAll("[data-community-player-sort]").forEach(button => {
+    const key = button.dataset.communityPlayerSort;
+    const active = communityStatsState.playerSort.key === key;
+    const baseText = button.dataset.sortLabel || button.textContent.replace(/\s+\((asc|desc)\)$/i, "");
+    button.dataset.sortLabel = baseText;
+
+    button.classList.toggle("active", active);
+    button.textContent = `${baseText}${active ? ` (${communityStatsState.playerSort.direction})` : ""}`;
+  });
+}
+
+function getDefaultCommunityPlayerSortDirection(key) {
+  return key === "rank" || key === "deaths" ? "asc" : "desc";
 }
 
 function renderCommunityTeamFilter() {
@@ -5494,7 +5513,7 @@ function renderCommunityPlayersTable() {
     return;
   }
 
-  body.innerHTML = players.map(player => {
+  body.innerHTML = players.map((player, index) => {
     const teamUrl = buildCplTeamUrl(player.teamId);
     const playerUrl = buildCplPlayerUrl(player.teamId, player.playerId);
     const nickLabel = player.nick || player.name || "-";
@@ -5511,7 +5530,7 @@ function renderCommunityPlayersTable() {
 
     return `
       <tr>
-        <td>${formatCommunityNumber(player.communityRank)}</td>
+        <td>${formatCommunityNumber(index + 1)}</td>
         <td>${player.rank === null ? "-" : `#${formatCommunityNumber(player.rank)}`}</td>
         <td>${teamLogoHtml}</td>
         <td><strong>${nickHtml}</strong></td>
@@ -5598,13 +5617,31 @@ function getTournamentGroupLabel(group = getActiveTournamentGroup()) {
   return group === "eos" ? "End of Season" : "Championship";
 }
 
+function formatEosTierLabel(tier) {
+  const tierNumber = toFiniteNumberOrNull(tier);
+  const tierLabels = {
+    0: "S-Tier",
+    1: "A-Tier",
+    2: "B-Tier",
+    3: "C-Tier"
+  };
+
+  return tierNumber === null ? "" : tierLabels[tierNumber] || `Tier ${tierNumber}`;
+}
+
+function formatTournamentMapName(mapName) {
+  const text = String(mapName || "").trim();
+  if (!text) return "-";
+  return text.replace(/_v\d+$/i, "");
+}
+
 function getTournamentDisplayName(item) {
   const parts = [];
   const type = normalizeSearchValue(item.tournament.type);
 
   if (item.tournament.type && type !== "official") parts.push(formatTournamentLabel(item.tournament.type));
   if (item.group === "eos" && item.tournament.tier !== null && item.tournament.tier !== undefined) {
-    parts.push(`Tier ${item.tournament.tier}`);
+    parts.push(formatEosTierLabel(item.tournament.tier));
   }
 
   return parts.length ? parts.join(" / ") : item.tournament.name;
@@ -5649,15 +5686,28 @@ function renderTournamentNextMatch(item) {
   const opponent = getOpponentForMatch(match, item.team.teamId);
   const matchUrl = buildCplMatchUrl(match.id);
   const dateText = formatTournamentDateTime(match.date);
+  const mapText = formatTournamentMapName(match.map);
   const metaText = match.map && dateText !== "-"
-    ? `${dateText} · ${match.map}`
-    : match.map || dateText;
+    ? `${dateText} · ${mapText}`
+    : (match.map ? mapText : dateText);
   const opponentText = `vs ${opponent.teamName}`;
   const opponentHtml = matchUrl
     ? `<a class="community-link" href="${escapeHtml(matchUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(opponentText)}</a>`
     : escapeHtml(opponentText);
 
   return `<span class="community-next-match"><span>${escapeHtml(metaText)}</span>${opponentHtml}</span>`;
+}
+
+function getMatchOutcomeForTeam(match, teamId) {
+  if (match.homeScore === null || match.awayScore === null) return "";
+  if (match.homeScore === match.awayScore) return "draw";
+
+  const id = String(teamId);
+  const teamIsHome = String(match.homeTeamId) === id;
+  const teamScore = teamIsHome ? match.homeScore : match.awayScore;
+  const opponentScore = teamIsHome ? match.awayScore : match.homeScore;
+
+  return teamScore > opponentScore ? "win" : "loss";
 }
 
 function renderTournamentTeamRow(item) {
@@ -5670,9 +5720,12 @@ function renderTournamentTeamRow(item) {
   const statusText = item.derivedStatus && item.derivedStatus !== "Unknown"
     ? item.derivedStatus
     : formatTournamentLabel(item.stageStatus || item.tournament.status) || "-";
+  const rowClass = normalizeSearchValue(statusText).includes("eliminated")
+    ? ' class="community-tournament-row-eliminated"'
+    : "";
 
   return `
-    <tr>
+    <tr${rowClass}>
       <td>${escapeHtml(position)}</td>
       <td>${renderTeamLogoCell(item.team)}</td>
       <td><strong>${teamNameHtml}</strong></td>
@@ -5709,6 +5762,8 @@ function getPlayedTournamentMatchRows(items) {
 function renderPlayedTournamentMatchRow(row) {
   const { item, match, opponent } = row;
   const matchUrl = buildCplMatchUrl(match.id);
+  const outcome = getMatchOutcomeForTeam(match, item.team.teamId);
+  const rowClass = outcome ? ` class="community-match-outcome-${outcome}"` : "";
   const scoreHtml = match.homeScore !== null && match.awayScore !== null
     ? `<span class="community-score"><span>${formatCommunityNumber(match.homeScore)}</span><span>:</span><span>${formatCommunityNumber(match.awayScore)}</span></span>`
     : "-";
@@ -5722,14 +5777,14 @@ function renderPlayedTournamentMatchRow(row) {
     : escapeHtml(item.team.teamName);
 
   return `
-    <tr>
+    <tr${rowClass}>
       <td>${escapeHtml(formatTournamentDateTime(match.date))}</td>
       <td><strong>${teamHtml}</strong></td>
       <td>${opponentHtml}</td>
       <td>${scoreHtml}</td>
       <td>${escapeHtml(getTournamentDisplayName(item))}</td>
       <td>${escapeHtml(match.stageName || match.roundName || "-")}</td>
-      <td>${escapeHtml(match.map || "-")}</td>
+      <td>${escapeHtml(formatTournamentMapName(match.map))}</td>
     </tr>
   `;
 }
@@ -5884,6 +5939,7 @@ function renderCommunityStats() {
   renderCommunityStatus();
   renderCommunityPanelNavigation();
   renderCommunityTeamSortButtons();
+  renderCommunityPlayerSortButtons();
   renderCommunityTeamFilter();
   renderCommunityTeamsTable();
   renderCommunityPlayersTable();
@@ -6222,6 +6278,21 @@ function setupCommunityStats() {
       } else {
         communityStatsState.teamSort.key = key;
         communityStatsState.teamSort.direction = key === "fame" ? "desc" : "asc";
+      }
+
+      renderCommunityStats();
+    });
+  });
+
+  document.querySelectorAll("[data-community-player-sort]").forEach(button => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.communityPlayerSort;
+
+      if (communityStatsState.playerSort.key === key) {
+        communityStatsState.playerSort.direction = communityStatsState.playerSort.direction === "asc" ? "desc" : "asc";
+      } else {
+        communityStatsState.playerSort.key = key;
+        communityStatsState.playerSort.direction = getDefaultCommunityPlayerSortDirection(key);
       }
 
       renderCommunityStats();
