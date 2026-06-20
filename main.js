@@ -125,9 +125,12 @@ const COMMUNITY_ID = 121;
 const COMMUNITY_CACHE_KEY = "cplCommunityStatsCache_v1";
 const COMMUNITY_RANKING_BASELINES_KEY = "cplCommunityRankingBaselines_v1";
 const COMMUNITY_TOURNAMENT_CACHE_KEY = "cplCommunityTournamentCache_v1";
+const COMMUNITY_SEASON_EXPORT_AUTO_KEY = "cplCommunitySeasonExportAuto_v1";
+const COMMUNITY_SEASON_EXPORT_HISTORY_KEY = "cplCommunitySeasonExportHistory_v1";
 const COMMUNITY_CACHE_MAX_AGE_MS = 60 * 60 * 1000;
 const COMMUNITY_TOURNAMENT_CACHE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 const COMMUNITY_TOURNAMENT_FETCH_LIMIT = 16;
+const COMMUNITY_AUTO_EXPORT_CHECK_MS = 30 * 60 * 1000;
 const COMMUNITY_FALLBACK_TEAM_IDS = [4355, 3147, 1394, 2522, 143, 3277];
 const CPL_MEDIA_TEAM_BASE = "https://media.cplmanager.com/teams";
 const DIVISION_MAP = {
@@ -252,6 +255,14 @@ const communityTournamentState = {
   season: null,
   lastUpdated: null
 };
+
+const communityExportState = {
+  loading: false,
+  lastMessage: "",
+  lastType: ""
+};
+
+let communityAutoExportTimer = null;
 
 const maxAgeMarkerPlugin = {
   id: "maxAgeMarker",
@@ -5870,6 +5881,265 @@ function renderCommunityTournaments() {
   renderTournamentTables();
 }
 
+function getCommunityAutoExportEnabled() {
+  const stored = localStorage.getItem(COMMUNITY_SEASON_EXPORT_AUTO_KEY);
+  return stored === null ? true : stored === "true";
+}
+
+function setCommunityAutoExportEnabled(enabled) {
+  localStorage.setItem(COMMUNITY_SEASON_EXPORT_AUTO_KEY, String(Boolean(enabled)));
+}
+
+function getCommunitySeasonExportHistory() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(COMMUNITY_SEASON_EXPORT_HISTORY_KEY));
+    return stored && typeof stored === "object" ? stored : {};
+  } catch {
+    return {};
+  }
+}
+
+function setCommunitySeasonExportHistory(history) {
+  localStorage.setItem(COMMUNITY_SEASON_EXPORT_HISTORY_KEY, JSON.stringify(history));
+}
+
+function getCommunitySeasonExportKey(seasonState = getCurrentCplSeasonState()) {
+  return `${COMMUNITY_ID}:${seasonState.season}`;
+}
+
+function hasCommunitySeasonAutoExport(seasonState = getCurrentCplSeasonState()) {
+  return Boolean(getCommunitySeasonExportHistory()[getCommunitySeasonExportKey(seasonState)]);
+}
+
+function markCommunitySeasonAutoExport(snapshot, fileName) {
+  const history = getCommunitySeasonExportHistory();
+  const seasonState = snapshot?.season || getCurrentCplSeasonState();
+
+  history[getCommunitySeasonExportKey(seasonState)] = {
+    season: seasonState.season,
+    seasonDay: seasonState.seasonDay,
+    exportedAt: new Date().toISOString(),
+    fileName
+  };
+
+  setCommunitySeasonExportHistory(history);
+}
+
+function setCommunityExportStatus(message = "", type = "") {
+  communityExportState.lastMessage = message;
+  communityExportState.lastType = type;
+  renderCommunityExportStatus();
+}
+
+function renderCommunityExportStatus() {
+  const status = document.getElementById("community-export-status");
+  const autoInput = document.getElementById("community-auto-export");
+  const exportButton = document.getElementById("community-export-button");
+
+  if (autoInput) {
+    autoInput.checked = getCommunityAutoExportEnabled();
+    autoInput.disabled = communityExportState.loading;
+  }
+
+  if (exportButton) {
+    exportButton.disabled = communityExportState.loading || communityStatsState.loading || communityTournamentState.loading;
+    exportButton.textContent = communityExportState.loading ? "Exporting..." : "Export Season JSON";
+  }
+
+  if (!status) return;
+
+  status.className = `community-status ${communityExportState.lastType ? `community-status-${communityExportState.lastType}` : ""}`;
+  status.textContent = communityExportState.lastMessage || "";
+}
+
+function cloneForExport(value) {
+  return JSON.parse(JSON.stringify(value ?? null));
+}
+
+function buildCommunitySeasonSnapshot() {
+  const seasonState = communityStatsState.seasonState || getCurrentCplSeasonState();
+  const allTournamentItems = getAllTournamentItems();
+
+  return {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    exportType: "community-season-snapshot",
+    community: {
+      id: COMMUNITY_ID,
+      name: communityStatsState.communityName || `Community ${COMMUNITY_ID}`
+    },
+    season: {
+      season: seasonState.season,
+      seasonDay: seasonState.seasonDay,
+      label: seasonState.label,
+      fullLabel: seasonState.fullLabel,
+      isSeasonEnd: seasonState.seasonDay === CPL_SEASON_DAYS,
+      ladderId: communityStatsState.ladderId || seasonState.season + 36
+    },
+    sources: {
+      community: communityStatsState.communitySource || "",
+      ladder: communityStatsState.ladderSource || "",
+      ranking: communityStatsState.rankingSource || "",
+      tournaments: communityTournamentState.source || "",
+      playersSeason: communityStatsState.playersSeason,
+      communityLoadedAt: communityStatsState.lastUpdated,
+      tournamentsLoadedAt: communityTournamentState.lastUpdated,
+      communityWarning: communityStatsState.warning || "",
+      tournamentWarning: communityTournamentState.warning || ""
+    },
+    counts: {
+      teams: communityStatsState.teams.length,
+      players: communityStatsState.players.length,
+      tournamentTeams: allTournamentItems.length,
+      championshipItems: communityTournamentState.championshipItems.length,
+      eosItems: communityTournamentState.eosItems.length
+    },
+    teams: cloneForExport(communityStatsState.teams),
+    players: cloneForExport(communityStatsState.players),
+    tournaments: {
+      championship: cloneForExport(communityTournamentState.championshipItems),
+      eos: cloneForExport(communityTournamentState.eosItems)
+    }
+  };
+}
+
+function getCommunityExportDateStamp(date = new Date()) {
+  const parts = getBerlinDateTimeParts(date);
+  return [
+    parts.year,
+    String(parts.month).padStart(2, "0"),
+    String(parts.day).padStart(2, "0")
+  ].join("-");
+}
+
+function getCommunitySeasonExportFileName(snapshot) {
+  const season = snapshot?.season?.season ?? getCurrentCplSeasonState().season;
+  const day = snapshot?.season?.seasonDay ?? getCurrentCplSeasonState().seasonDay;
+  const date = getCommunityExportDateStamp();
+
+  return `cpl-community-${COMMUNITY_ID}-season-${season}-day-${String(day).padStart(2, "0")}-${date}.json`;
+}
+
+function downloadJsonFile(fileName, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function loadCommunityDataForExport(forceRefresh = true) {
+  await loadCommunityStats({
+    forceTeamRefresh: forceRefresh,
+    refreshPlayers: true,
+    forceRankingRefresh: forceRefresh,
+    loadTournaments: false
+  });
+
+  if (!communityStatsState.loaded) {
+    throw new Error(communityStatsState.error || "Community data could not be loaded.");
+  }
+
+  const statFallbacks = [
+    communityStatsState.communitySource === "demo" ? "community" : "",
+    communityStatsState.ladderSource === "demo" ? "ladder" : "",
+    communityStatsState.rankingSource === "demo" ? "ranking" : ""
+  ].filter(Boolean);
+
+  if (statFallbacks.length) {
+    throw new Error(`Export cancelled because ${statFallbacks.join(", ")} data is using demo fallback data.`);
+  }
+
+  await loadCommunityTournaments(forceRefresh);
+
+  if (!communityTournamentState.loaded) {
+    throw new Error(communityTournamentState.error || "Tournament data could not be loaded.");
+  }
+
+  if (communityTournamentState.source === "demo" || communityTournamentState.warning) {
+    throw new Error(`Export cancelled because tournament data is incomplete or using fallback data. ${communityTournamentState.warning || ""}`.trim());
+  }
+}
+
+async function exportCommunitySeasonSnapshot(options = {}) {
+  if (communityExportState.loading) return null;
+
+  const auto = Boolean(options.auto);
+  const forceRefresh = options.forceRefresh !== false;
+
+  communityExportState.loading = true;
+  setCommunityExportStatus(auto ? "Season-end auto export is loading fresh community data..." : "Loading fresh community data for export...", "loading");
+
+  try {
+    await loadCommunityDataForExport(forceRefresh);
+    const snapshot = buildCommunitySeasonSnapshot();
+    const fileName = getCommunitySeasonExportFileName(snapshot);
+
+    downloadJsonFile(fileName, snapshot);
+
+    if (auto || snapshot.season.isSeasonEnd) {
+      markCommunitySeasonAutoExport(snapshot, fileName);
+    }
+
+    setCommunityExportStatus(`Exported ${fileName}`, "success");
+    return snapshot;
+  } catch (error) {
+    console.error("CPL community season export failed", error);
+    setCommunityExportStatus(error?.message || "Community season export failed.", "error");
+    return null;
+  } finally {
+    communityExportState.loading = false;
+    renderCommunityExportStatus();
+  }
+}
+
+function maybeRunCommunitySeasonAutoExport() {
+  const seasonState = getCurrentCplSeasonState();
+
+  if (seasonState.seasonDay !== CPL_SEASON_DAYS) return false;
+  if (!getCommunityAutoExportEnabled()) return false;
+  if (hasCommunitySeasonAutoExport(seasonState)) {
+    const history = getCommunitySeasonExportHistory()[getCommunitySeasonExportKey(seasonState)];
+    setCommunityExportStatus(`Auto export for ${seasonState.label} already completed${history?.fileName ? `: ${history.fileName}` : "."}`, "success");
+    return false;
+  }
+
+  exportCommunitySeasonSnapshot({
+    auto: true,
+    forceRefresh: true
+  });
+  return true;
+}
+
+function isCommunityStatsViewActive() {
+  const view = document.getElementById("community-stats-view");
+  return Boolean(view && !view.hidden && view.classList.contains("active-view"));
+}
+
+function checkCommunitySeasonAutoExport() {
+  if (isCommunityStatsViewActive()) {
+    maybeRunCommunitySeasonAutoExport();
+  }
+}
+
+function setupCommunitySeasonAutoExportSchedule() {
+  if (communityAutoExportTimer !== null) return;
+
+  communityAutoExportTimer = window.setInterval(checkCommunitySeasonAutoExport, COMMUNITY_AUTO_EXPORT_CHECK_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      checkCommunitySeasonAutoExport();
+    }
+  });
+}
+
 function renderCommunityStatus() {
   const status = document.getElementById("community-stats-status");
   const communityHeading = document.getElementById("community-name-heading");
@@ -5941,6 +6211,7 @@ function renderCommunityStats() {
   }
 
   renderCommunityStatus();
+  renderCommunityExportStatus();
   renderCommunityPanelNavigation();
   renderCommunityTeamSortButtons();
   renderCommunityPlayerSortButtons();
@@ -5954,20 +6225,24 @@ function normalizeCommunityLoadOptions(options) {
   if (typeof options === "boolean") {
     return {
       forceTeamRefresh: options,
-      refreshPlayers: true
+      refreshPlayers: true,
+      forceRankingRefresh: options,
+      loadTournaments: true
     };
   }
 
   return {
     forceTeamRefresh: Boolean(options?.forceTeamRefresh),
-    refreshPlayers: options?.refreshPlayers !== false
+    refreshPlayers: options?.refreshPlayers !== false,
+    forceRankingRefresh: Boolean(options?.forceRankingRefresh),
+    loadTournaments: options?.loadTournaments !== false
   };
 }
 
 async function loadCommunityStats(options = {}) {
   if (communityStatsState.loading) return;
 
-  const { forceTeamRefresh, refreshPlayers } = normalizeCommunityLoadOptions(options);
+  const { forceTeamRefresh, refreshPlayers, forceRankingRefresh, loadTournaments } = normalizeCommunityLoadOptions(options);
   const seasonState = getCurrentCplSeasonState();
   const currentSeason = seasonState.season;
   const ladderId = currentSeason + 36;
@@ -6062,7 +6337,7 @@ async function loadCommunityStats(options = {}) {
         try {
           communityStatsState.warning = "Loading daily player rankings...";
           renderCommunityStatus();
-          const rankingResult = await loadRankingDataWithCache(false, message => {
+          const rankingResult = await loadRankingDataWithCache(forceRankingRefresh, message => {
             communityStatsState.warning = message;
             renderCommunityStatus();
           }, currentSeason);
@@ -6111,7 +6386,7 @@ async function loadCommunityStats(options = {}) {
     communityStatsState.loading = false;
     renderCommunityStats();
 
-    if (communityStatsState.loaded && !communityTournamentState.loaded && !communityTournamentState.loading) {
+    if (loadTournaments && communityStatsState.loaded && !communityTournamentState.loaded && !communityTournamentState.loading) {
       loadCommunityTournaments(false);
     }
   }
@@ -6219,6 +6494,10 @@ async function loadCommunityTournaments(forceRefresh = false) {
 }
 
 function ensureCommunityStatsLoaded() {
+  if (maybeRunCommunitySeasonAutoExport()) {
+    return;
+  }
+
   if (!communityStatsState.loaded && !communityStatsState.loading) {
     loadCommunityStats(false);
     return;
@@ -6237,6 +6516,23 @@ function setupCommunityStats() {
       forceTeamRefresh: true,
       refreshPlayers: false
     });
+  });
+
+  document.getElementById("community-export-button")?.addEventListener("click", () => {
+    exportCommunitySeasonSnapshot({
+      auto: false,
+      forceRefresh: true
+    });
+  });
+
+  document.getElementById("community-auto-export")?.addEventListener("change", event => {
+    setCommunityAutoExportEnabled(event.target.checked);
+    setCommunityExportStatus(
+      event.target.checked
+        ? "Auto export will run once when Community is opened on season day 35."
+        : "Auto export is disabled.",
+      event.target.checked ? "success" : "warning"
+    );
   });
 
   document.getElementById("community-player-search")?.addEventListener("input", event => {
@@ -6475,6 +6771,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupViewTabs();
   setupTryoutAnalyzer();
   setupCommunityStats();
+  setupCommunitySeasonAutoExportSchedule();
   document.getElementById("compare-button")?.addEventListener("click", runComparison);
   document.getElementById("transfer-suggestions")?.addEventListener("click", handleTransferSuggestionClick);
   document.getElementById("load-team-button")?.addEventListener("click", loadTeamPlayers);

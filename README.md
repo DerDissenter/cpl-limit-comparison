@@ -80,6 +80,24 @@ Die **Community**-Ansicht zeigt aktuelle Daten für Community 121.
 * Lokaler Demo-Fallback, falls die Online-Daten im Live Server nicht erreichbar sind
 * Tournament Status für Championship- und End-of-Season-Turniere inklusive Matchlinks
 
+### Community Season Export
+
+Für einen Season-Snapshot als Projektdatei:
+
+```bash
+node scripts/export-community-season.mjs
+```
+
+Die JSON-Datei wird nach `exports/community-season-snapshots/` geschrieben. Optional kann eine Season explizit gesetzt werden:
+
+```bash
+node scripts/export-community-season.mjs --season 12
+```
+
+Der Export enthält Community-Teams, die zugeordneten Spieler, Team-Tournamentdaten und Metadaten zur CPL-Season.
+
+Der Workflow `Community Season Export` prüft täglich nach dem CPL-Tagesupdate, ob Season-Tag 35 erreicht ist. Falls ja, erzeugt er einmalig einen Snapshot und committet ihn in denselben Ordner.
+
 ## 5. Schätzmodus für versteckte Limits
 
 Bei Tryouts sind manche Limits mit `?` maskiert. Dafür gibt es zwei Modi:

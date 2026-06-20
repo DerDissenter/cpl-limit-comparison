@@ -177,6 +177,35 @@ h2 {
   color: #ff9a9a;
 }
 
+.community-export-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.community-export-bar button {
+  width: auto;
+}
+
+.community-auto-export-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: rgba(255, 248, 201, 0.86);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.community-auto-export-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #ff7a00;
+}
+
 .community-tournament-header button {
   width: auto;
 }
@@ -1809,6 +1838,14 @@ button:disabled {
   .panel {
     padding: 10px;
     border-radius: 10px;
+  }
+
+  .community-export-bar {
+    align-items: stretch;
+  }
+
+  .community-export-bar button {
+    width: 100%;
   }
 
   input,
