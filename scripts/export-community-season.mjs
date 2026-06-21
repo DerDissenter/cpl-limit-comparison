@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,6 +12,9 @@ const MAIN_JS_PATH = path.join(ROOT_DIR, "main.js");
 const DEFAULT_OUTPUT_DIR = path.join(ROOT_DIR, "exports", "community-season-snapshots");
 const COMMUNITY_ID = 121;
 const CPL_SEASON_DAYS = 35;
+const CURL_MAX_BUFFER = 50 * 1024 * 1024;
+const HTTP_STATUS_MARKER = "\n__CPL_HTTP_STATUS__:";
+const execFileAsync = promisify(execFile);
 
 function parseArgs(argv) {
   const options = {
@@ -125,6 +130,78 @@ function createDocumentShim() {
   };
 }
 
+function getHeaderPairs(headers) {
+  if (!headers) return [];
+
+  if (headers instanceof Headers) {
+    return Array.from(headers.entries());
+  }
+
+  if (Array.isArray(headers)) {
+    return headers;
+  }
+
+  return Object.entries(headers);
+}
+
+function createJsonResponse(body, status) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async json() {
+      return JSON.parse(body);
+    },
+    async text() {
+      return body;
+    }
+  };
+}
+
+async function fetchWithCurlFallback(url, options = {}) {
+  try {
+    return await fetch(url, options);
+  } catch (fetchError) {
+    if (process.platform !== "win32") {
+      throw fetchError;
+    }
+
+    const method = options.method || "GET";
+    if (method.toUpperCase() !== "GET") {
+      throw fetchError;
+    }
+
+    const args = ["--ssl-no-revoke", "-sL", "--compressed"];
+    for (const [key, value] of getHeaderPairs(options.headers)) {
+      args.push("-H", `${key}: ${value}`);
+    }
+    args.push("-w", `${HTTP_STATUS_MARKER}%{http_code}`, String(url));
+
+    try {
+      const { stdout } = await execFileAsync("curl.exe", args, {
+        maxBuffer: CURL_MAX_BUFFER,
+        windowsHide: true
+      });
+      const markerIndex = stdout.lastIndexOf(HTTP_STATUS_MARKER);
+
+      if (markerIndex === -1) {
+        throw new Error("curl did not return an HTTP status.");
+      }
+
+      const body = stdout.slice(0, markerIndex);
+      const status = Number(stdout.slice(markerIndex + HTTP_STATUS_MARKER.length));
+
+      if (!Number.isFinite(status)) {
+        throw new Error("curl returned an invalid HTTP status.");
+      }
+
+      return createJsonResponse(body, status);
+    } catch (curlError) {
+      curlError.cause = fetchError;
+      throw curlError;
+    }
+  }
+}
+
 async function loadAppRuntime() {
   const source = await fs.readFile(MAIN_JS_PATH, "utf8");
   const localStorage = createLocalStorageShim();
@@ -142,7 +219,7 @@ async function loadAppRuntime() {
 
   const context = {
     console,
-    fetch,
+    fetch: fetchWithCurlFallback,
     URL,
     URLSearchParams,
     Blob,
