@@ -95,7 +95,7 @@ const ANALYSIS_AGE_DECAY = {
   40: -31
 };
 
-const RANKING_CACHE_KEY = "cplRankingPlayersCache_v4";
+const RANKING_CACHE_KEY = "cplRankingPlayersCache_v5";
 const IMPORTED_PLAYERS_KEY = "cplImportedPlayers_v1";
 const TRANSFER_LIST_CACHE_KEY = "cplTransferListCache_v1";
 const CPL_PROXY_BASE = "https://cpl-proxy.dissenter-cpl-tools.workers.dev";
@@ -103,6 +103,9 @@ const RANKING_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RANKING_REQUEST_DELAY_MS = 200;
 const CPL_FETCH_RETRY_COUNT = 4;
 const RANKING_MAX_PAGES = 100;
+const RANKING_STAT_FIELDS = ["games", "kills", "deaths", "headshots", "mvps"];
+const RANKING_OFFICIAL_AGGREGATE_MATCH_TYPE = "official";
+const RANKING_OFFICIAL_COMPONENT_MATCH_TYPES = new Set(["amateur", "eos", "cup", "ladder", "league"]);
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CPL_TIME_ZONE = "Europe/Berlin";
 const CPL_DAILY_UPDATE_HOUR = 2;
@@ -2211,6 +2214,72 @@ function resolveRankingScalar(root, object, key) {
   return resolveRankingReference(root, object[key]);
 }
 
+function resolveDevalueStatObject(root, object) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) return null;
+
+  const stats = {};
+  RANKING_STAT_FIELDS.forEach(field => {
+    stats[field] = toFiniteNumberOrNull(resolveRankingScalar(root, object, field));
+  });
+
+  const matchType = resolveRankingScalar(root, object, "matchType");
+  const season = toFiniteNumberOrNull(resolveRankingScalar(root, object, "season"));
+
+  if (matchType !== null) {
+    stats.matchType = String(matchType).toLowerCase();
+  }
+
+  if (season !== null) {
+    stats.season = season;
+  }
+
+  return stats;
+}
+
+function hasPositiveRankingStat(stats) {
+  return RANKING_STAT_FIELDS.some(field => (toFiniteNumberOrNull(stats?.[field]) || 0) > 0);
+}
+
+function sumRankingStats(rows) {
+  const totals = {};
+
+  RANKING_STAT_FIELDS.forEach(field => {
+    totals[field] = rows.reduce((sum, row) => sum + (toFiniteNumberOrNull(row?.[field]) || 0), 0);
+  });
+
+  return totals;
+}
+
+function getSeasonRankingStatsFromRows(root, playerStatsRef, season) {
+  const rankingSeason = toFiniteNumberOrNull(season);
+  const playerStats = resolveRankingReference(root, playerStatsRef);
+  if (!Array.isArray(playerStats) || rankingSeason === null) return null;
+
+  const seasonRows = playerStats
+    .map(rowRef => resolveDevalueStatObject(root, resolveRankingReference(root, rowRef)))
+    .filter(row => row && row.season === rankingSeason);
+  const aggregateRow = seasonRows.find(row => row.matchType === RANKING_OFFICIAL_AGGREGATE_MATCH_TYPE);
+
+  if (aggregateRow && hasPositiveRankingStat(aggregateRow)) {
+    return aggregateRow;
+  }
+
+  const componentRows = seasonRows.filter(row => RANKING_OFFICIAL_COMPONENT_MATCH_TYPES.has(row.matchType));
+  return componentRows.length ? sumRankingStats(componentRows) : null;
+}
+
+function getComputedRankingKd(stats) {
+  const kills = toFiniteNumberOrNull(stats?.kills);
+  const deaths = toFiniteNumberOrNull(stats?.deaths);
+  return deaths && kills !== null ? kills / deaths : null;
+}
+
+function getComputedRankingHs(stats) {
+  const kills = toFiniteNumberOrNull(stats?.kills);
+  const headshots = toFiniteNumberOrNull(stats?.headshots);
+  return kills && headshots !== null ? (headshots / kills) * 100 : null;
+}
+
 function normalizeDevalueTeam(root, teamRef) {
   const team = resolveRankingReference(root, teamRef);
   if (!team || typeof team !== "object" || Array.isArray(team)) return null;
@@ -2224,16 +2293,18 @@ function normalizeDevalueTeam(root, teamRef) {
   };
 }
 
-function normalizeDevalueRankingPlayer(root, playerRef, rank = null) {
+function normalizeDevalueRankingPlayer(root, playerRef, rank = null, rankingSeason = null) {
   const player = resolveRankingReference(root, playerRef);
   if (!player || typeof player !== "object" || Array.isArray(player)) return null;
 
   const team = normalizeDevalueTeam(root, player.team);
   const id = resolveRankingReference(root, player.id ?? player.playerId);
   const teamId = team?.id ?? resolveRankingReference(root, player.teamId);
-  const playerStats = resolveRankingReference(root, player.playerStats);
   const stat = resolveRankingReference(root, player.stat);
-  const gamesFromStats = Array.isArray(playerStats) ? playerStats.length : null;
+  const hasStatObject = stat && typeof stat === "object" && !Array.isArray(stat);
+  const statValues = resolveDevalueStatObject(root, stat) || {};
+  const seasonStatValues = getSeasonRankingStatsFromRows(root, player.playerStats, rankingSeason);
+  const rankingStats = hasPositiveRankingStat(statValues) ? statValues : seasonStatValues || statValues;
 
   if (id === null || id === undefined || teamId === null || teamId === undefined) {
     return null;
@@ -2248,25 +2319,25 @@ function normalizeDevalueRankingPlayer(root, playerRef, rank = null) {
     team,
     country: resolveRankingReference(root, player.country),
     rank,
-    games: resolveRankingScalar(root, stat, "games")
+    games: rankingStats.games
+      ?? (hasStatObject ? 0 : null)
       ?? resolveRankingScalar(root, stat, "matches")
       ?? resolveRankingScalar(root, player, "games")
       ?? resolveRankingScalar(root, player, "matches")
-      ?? resolveRankingScalar(root, player, "totalGames")
-      ?? gamesFromStats,
-    kills: resolveRankingScalar(root, stat, "kills")
+      ?? resolveRankingScalar(root, player, "totalGames"),
+    kills: rankingStats.kills
       ?? resolveRankingScalar(root, stat, "totalKills")
       ?? resolveRankingScalar(root, player, "kills")
       ?? resolveRankingScalar(root, player, "totalKills"),
-    deaths: resolveRankingScalar(root, stat, "deaths")
+    deaths: rankingStats.deaths
       ?? resolveRankingScalar(root, stat, "totalDeaths")
       ?? resolveRankingScalar(root, player, "deaths")
       ?? resolveRankingScalar(root, player, "totalDeaths"),
-    headshots: resolveRankingScalar(root, stat, "headshots")
+    headshots: rankingStats.headshots
       ?? resolveRankingScalar(root, stat, "totalHeadshots")
       ?? resolveRankingScalar(root, player, "headshots")
       ?? resolveRankingScalar(root, player, "totalHeadshots"),
-    mvps: resolveRankingScalar(root, stat, "mvps")
+    mvps: rankingStats.mvps
       ?? resolveRankingScalar(root, stat, "totalMvps")
       ?? resolveRankingScalar(root, player, "mvps")
       ?? resolveRankingScalar(root, player, "totalMvps"),
@@ -2282,9 +2353,11 @@ function normalizeDevalueRankingPlayer(root, playerRef, rank = null) {
     totalMvps: resolveRankingScalar(root, player, "totalMvps")
       ?? resolveRankingScalar(root, stat, "totalMvps")
       ?? resolveRankingScalar(root, stat, "mvps"),
-    kdRatio: resolveRankingScalar(root, player, "kdRatio")
+    kdRatio: getComputedRankingKd(rankingStats)
+      ?? resolveRankingScalar(root, player, "kdRatio")
       ?? resolveRankingScalar(root, stat, "kdRatio"),
-    hsPercentage: resolveRankingScalar(root, player, "hsPercentage")
+    hsPercentage: getComputedRankingHs(rankingStats)
+      ?? resolveRankingScalar(root, player, "hsPercentage")
       ?? resolveRankingScalar(root, stat, "hsPercentage")
   };
 }
@@ -2312,13 +2385,19 @@ function extractDevalueRankingPlayers(rawData) {
   const metadata = root[0] || {};
   const page = Number(resolveRankingReference(root, metadata.page));
   const limit = Number(resolveRankingReference(root, metadata.limit));
+  const season = Number(resolveRankingReference(root, metadata.season));
   const rankOffset = Number.isFinite(page) && page > 0 && Number.isFinite(limit) && limit > 0
     ? (page - 1) * limit
     : 0;
 
   return dedupeRankingPlayers(
     rankingPlayers
-      .map((playerRef, index) => normalizeDevalueRankingPlayer(root, playerRef, rankOffset + index + 1))
+      .map((playerRef, index) => normalizeDevalueRankingPlayer(
+        root,
+        playerRef,
+        rankOffset + index + 1,
+        Number.isFinite(season) ? season : null
+      ))
       .filter(Boolean)
   );
 }
