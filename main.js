@@ -95,7 +95,7 @@ const ANALYSIS_AGE_DECAY = {
   40: -31
 };
 
-const RANKING_CACHE_KEY = "cplRankingPlayersCache_v5";
+const RANKING_CACHE_KEY = "cplRankingPlayersCache_v6";
 const IMPORTED_PLAYERS_KEY = "cplImportedPlayers_v1";
 const TRANSFER_LIST_CACHE_KEY = "cplTransferListCache_v1";
 const CPL_PROXY_BASE = "https://cpl-proxy.dissenter-cpl-tools.workers.dev";
@@ -117,7 +117,7 @@ const CPL_SEASON_ANCHOR = {
 const RANKING_CONFIG = {
   country: "All countries",
   type: "official",
-  limit: 200
+  limit: 100
 };
 const TRANSFER_LIST_CONFIG = {
   ageRange: "13-44",
