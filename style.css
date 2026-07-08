@@ -177,7 +177,8 @@ h2 {
   color: #ff9a9a;
 }
 
-.community-tournament-header button {
+.community-tournament-header button,
+.community-ladder-header button {
   width: auto;
 }
 
@@ -211,18 +212,21 @@ h2 {
   color: #ffffff;
 }
 
-.community-tournament-content {
+.community-tournament-content,
+.community-ladder-content {
   display: grid;
   gap: 14px;
   min-width: 0;
   margin-top: 10px;
 }
 
-.community-tournament-table-section {
+.community-tournament-table-section,
+.community-ladder-table-section {
   min-width: 0;
 }
 
-.community-tournament-table-section h3 {
+.community-tournament-table-section h3,
+.community-ladder-table-section h3 {
   margin: 0 0 8px;
   color: #ffffff;
   font-size: 11px;
@@ -236,7 +240,10 @@ h2 {
 }
 
 .community-tournament-status-table,
-.community-tournament-matches-table {
+.community-tournament-matches-table,
+.community-ladder-teams-table,
+.community-ladder-matches-table,
+.community-ladder-matchups-table {
   table-layout: fixed;
 }
 
@@ -248,10 +255,55 @@ h2 {
   min-width: 820px;
 }
 
+.community-ladder-teams-table {
+  min-width: 780px;
+}
+
+.community-ladder-matches-table {
+  min-width: 720px;
+}
+
+.community-ladder-matchups-table {
+  min-width: 640px;
+}
+
 .community-tournament-status-table th:nth-child(1),
 .community-tournament-status-table td:nth-child(1) {
   width: 44px;
   text-align: center;
+}
+
+.community-ladder-teams-table th:nth-child(1),
+.community-ladder-teams-table td:nth-child(1) {
+  width: 54px;
+  text-align: center;
+}
+
+.community-ladder-teams-table th:nth-child(2),
+.community-ladder-teams-table td:nth-child(2) {
+  width: 48px;
+  text-align: center;
+}
+
+.community-ladder-teams-table th:nth-child(3),
+.community-ladder-teams-table td:nth-child(3) {
+  width: 25%;
+}
+
+.community-ladder-teams-table th:nth-child(4),
+.community-ladder-teams-table td:nth-child(4) {
+  width: 13%;
+}
+
+.community-ladder-teams-table th:nth-child(5),
+.community-ladder-teams-table td:nth-child(5) {
+  width: 12%;
+  text-align: right;
+}
+
+.community-ladder-teams-table th:nth-child(6),
+.community-ladder-teams-table td:nth-child(6) {
+  width: 32%;
 }
 
 .community-tournament-status-table th:nth-child(2),
@@ -317,15 +369,52 @@ h2 {
   width: 76px;
 }
 
+.community-ladder-matches-table th:nth-child(1),
+.community-ladder-matches-table td:nth-child(1),
+.community-ladder-matchups-table th:nth-child(1),
+.community-ladder-matchups-table td:nth-child(1) {
+  width: 78px;
+}
+
+.community-ladder-matches-table th:nth-child(2),
+.community-ladder-matches-table td:nth-child(2),
+.community-ladder-matches-table th:nth-child(3),
+.community-ladder-matches-table td:nth-child(3),
+.community-ladder-matchups-table th:nth-child(2),
+.community-ladder-matchups-table td:nth-child(2),
+.community-ladder-matchups-table th:nth-child(3),
+.community-ladder-matchups-table td:nth-child(3) {
+  width: 28%;
+}
+
+.community-ladder-matches-table th:nth-child(4),
+.community-ladder-matches-table td:nth-child(4) {
+  width: 64px;
+  text-align: center;
+}
+
+.community-ladder-matches-table th:nth-child(5),
+.community-ladder-matches-table td:nth-child(5),
+.community-ladder-matchups-table th:nth-child(4),
+.community-ladder-matchups-table td:nth-child(4) {
+  width: 76px;
+}
+
 .community-tournament-status-table td,
-.community-tournament-matches-table td {
+.community-tournament-matches-table td,
+.community-ladder-teams-table td,
+.community-ladder-matches-table td,
+.community-ladder-matchups-table td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .community-tournament-status-table .community-link,
-.community-tournament-matches-table .community-link {
+.community-tournament-matches-table .community-link,
+.community-ladder-teams-table .community-link,
+.community-ladder-matches-table .community-link,
+.community-ladder-matchups-table .community-link {
   display: inline-block;
   max-width: 100%;
   overflow: hidden;
@@ -1847,18 +1936,23 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .community-section[data-community-panel="tournaments"] {
+  .community-section[data-community-panel="tournaments"],
+  .community-section[data-community-panel="ladder"] {
     overflow: hidden;
   }
 
   .community-tournament-content,
+  .community-ladder-content,
   .community-tournament-table-section,
-  .community-tournament-table-section .community-table-wrap {
+  .community-ladder-table-section,
+  .community-tournament-table-section .community-table-wrap,
+  .community-ladder-table-section .community-table-wrap {
     min-width: 0;
     max-width: 100%;
   }
 
-  .community-tournament-table-section .community-table-wrap {
+  .community-tournament-table-section .community-table-wrap,
+  .community-ladder-table-section .community-table-wrap {
     margin-inline: -2px;
     padding-bottom: 4px;
   }

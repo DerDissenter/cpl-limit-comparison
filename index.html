@@ -217,7 +217,107 @@
         <div class="community-subnav" role="tablist" aria-label="Community sections">
           <button class="community-toggle-button" type="button" data-community-panel-target="teams" role="tab">Team Ranking</button>
           <button class="community-toggle-button" type="button" data-community-panel-target="players" role="tab">Player Ranking</button>
+          <button class="community-toggle-button" type="button" data-community-panel-target="ladder" role="tab">Ladder</button>
+          <button class="community-toggle-button" type="button" data-community-panel-target="league" role="tab">League</button>
           <button class="community-toggle-button" type="button" data-community-panel-target="tournaments" role="tab">Tournaments</button>
+        </div>
+      </section>
+
+      <section class="panel community-section" data-community-panel="ladder" hidden>
+        <div class="community-section-header community-ladder-header">
+          <h2>Ladder</h2>
+          <button id="community-ladder-refresh-button" type="button">Refresh Ladder</button>
+        </div>
+
+        <div id="community-ladder-status" class="community-status" role="status" aria-live="polite">
+          Ladder data not loaded yet.
+        </div>
+
+        <div class="community-ladder-content">
+          <section class="community-ladder-table-section">
+            <h3>Community Ladder Ranking</h3>
+            <div class="community-table-wrap">
+              <table class="community-table community-ladder-teams-table">
+                <thead>
+                  <tr>
+                    <th>Pos</th>
+                    <th>Logo</th>
+                    <th>Team</th>
+                    <th>Record</th>
+                    <th>Points</th>
+                    <th>Next Match</th>
+                  </tr>
+                </thead>
+                <tbody id="community-ladder-teams-body">
+                  <tr><td colspan="6">No ladder data loaded yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="community-ladder-table-section">
+            <h3>Community Ladder Player Ranking</h3>
+            <div class="community-table-wrap community-player-table-wrap">
+              <table class="community-table community-player-table community-ladder-player-table">
+                <thead>
+                  <tr>
+                    <th>C-Rank</th>
+                    <th>Rank</th>
+                    <th>Team</th>
+                    <th>Nick</th>
+                    <th>Games</th>
+                    <th>K/D</th>
+                    <th>HS%</th>
+                    <th>Kills</th>
+                    <th>Deaths</th>
+                    <th>MVPs</th>
+                  </tr>
+                </thead>
+                <tbody id="community-ladder-players-body">
+                  <tr><td colspan="10">No ladder player data loaded yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="community-ladder-table-section">
+            <h3>Latest Ladder Results</h3>
+            <div class="community-table-wrap">
+              <table class="community-table community-ladder-matches-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Team</th>
+                    <th>Opponent</th>
+                    <th>Score</th>
+                    <th>Map</th>
+                  </tr>
+                </thead>
+                <tbody id="community-ladder-results-body">
+                  <tr><td colspan="5">No ladder results loaded yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="community-ladder-table-section">
+            <h3>Next Ladder Matchups</h3>
+            <div class="community-table-wrap">
+              <table class="community-table community-ladder-matchups-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Team</th>
+                    <th>Opponent</th>
+                    <th>Map</th>
+                  </tr>
+                </thead>
+                <tbody id="community-ladder-upcoming-body">
+                  <tr><td colspan="4">No upcoming ladder matches loaded yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -354,6 +454,14 @@
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section class="panel community-section" data-community-panel="league" hidden>
+        <div class="community-section-header">
+          <h2>League</h2>
+        </div>
+
+        <p class="community-empty-state">League data source is not configured yet.</p>
       </section>
     </section>
   </main>
