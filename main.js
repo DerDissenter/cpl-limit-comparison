@@ -95,7 +95,7 @@ const ANALYSIS_AGE_DECAY = {
   40: -31
 };
 
-const RANKING_CACHE_KEY = "cplRankingPlayersCache_v6";
+const RANKING_CACHE_KEY = "cplRankingPlayersCache_v7";
 const IMPORTED_PLAYERS_KEY = "cplImportedPlayers_v1";
 const TRANSFER_LIST_CACHE_KEY = "cplTransferListCache_v1";
 const CPL_PROXY_BASE = "https://cpl-proxy.dissenter-cpl-tools.workers.dev";
@@ -2125,12 +2125,31 @@ function getRankingUrl(page, season = getCurrentRankingSeason()) {
   return `${CPL_PROXY_BASE}/rankings/players?${params.toString()}`;
 }
 
+function getRankingAllUrl(season = getCurrentRankingSeason()) {
+  const params = new URLSearchParams({
+    limit: String(RANKING_CONFIG.limit),
+    country: RANKING_CONFIG.country,
+    type: RANKING_CONFIG.type,
+    season: String(season)
+  });
+
+  return `${CPL_PROXY_BASE}/rankings/players/all?${params.toString()}`;
+}
+
 async function fetchRankingPage(page, season = getCurrentRankingSeason()) {
   return fetchJsonWithRetry(getRankingUrl(page, season), {
     headers: {
       "Accept": "application/json"
     }
   }, `Ranking page ${page}`);
+}
+
+async function fetchRankingAllPages(season = getCurrentRankingSeason()) {
+  return fetchJsonWithRetry(getRankingAllUrl(season), {
+    headers: {
+      "Accept": "application/json"
+    }
+  }, "Ranking bundle");
 }
 
 function isPlayerLikeRankingEntry(value) {
@@ -2471,6 +2490,21 @@ function setRankingCache(players, season = getCurrentRankingSeason()) {
   }));
 }
 
+function addUniqueRankingPlayers(target, pagePlayers, seenRankingKeys) {
+  const newPagePlayers = pagePlayers.filter(player => {
+    const id = String(firstDefined(player, ["id", "playerId", "player.id"]));
+    const teamId = String(firstDefined(player, ["teamId", "team.id", "teamID"]));
+    const key = `${id}:${teamId}`;
+
+    if (seenRankingKeys.has(key)) return false;
+    seenRankingKeys.add(key);
+    return true;
+  });
+
+  target.push(...newPagePlayers);
+  return newPagePlayers;
+}
+
 async function loadRankingDataWithCache(forceRefresh = false, onProgress = () => {}, season = getCurrentRankingSeason()) {
   const rankingSeason = Math.max(1, Math.round(toFiniteNumberOrNull(season) || getCurrentRankingSeason()));
   const cached = getRankingCache();
@@ -2493,6 +2527,49 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
 
   const players = [];
   const seenRankingKeys = new Set();
+
+  try {
+    onProgress("Loading ranking bundle...");
+
+    const rankingBundle = await fetchRankingAllPages(rankingSeason);
+    const rawPages = Array.isArray(rankingBundle?.pages) ? rankingBundle.pages : [];
+
+    rawPages.forEach((rawPage, index) => {
+      const pagePlayers = extractRankingPlayers(rawPage);
+      const newPagePlayers = addUniqueRankingPlayers(players, pagePlayers, seenRankingKeys);
+
+      console.info("CPL ranking bundle page parsed", {
+        season: rankingSeason,
+        page: index + 1,
+        count: pagePlayers.length,
+        newCount: newPagePlayers.length,
+        total: players.length
+      });
+    });
+
+    if (players.length) {
+      setRankingCache(players, rankingSeason);
+      console.info("CPL ranking data loaded from bundle", {
+        season: rankingSeason,
+        count: players.length,
+        pages: rawPages.length,
+        source: rankingBundle?.source || "bundle"
+      });
+      onProgress(`Loaded ranking bundle (${players.length} players).`);
+
+      return {
+        source: rankingBundle?.source || "bundle",
+        season: rankingSeason,
+        players
+      };
+    }
+
+    console.warn("CPL ranking bundle did not contain parseable players", rankingBundle);
+  } catch (error) {
+    console.warn("CPL ranking bundle failed, falling back to paged loading", error);
+    onProgress("Ranking bundle unavailable, loading pages...");
+  }
+
   let page = 1;
   let totalPages = null;
 
@@ -2511,17 +2588,7 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
     }
 
     const pagePlayers = extractRankingPlayers(rawPage);
-    const newPagePlayers = pagePlayers.filter(player => {
-      const id = String(firstDefined(player, ["id", "playerId", "player.id"]));
-      const teamId = String(firstDefined(player, ["teamId", "team.id", "teamID"]));
-      const key = `${id}:${teamId}`;
-
-      if (seenRankingKeys.has(key)) return false;
-      seenRankingKeys.add(key);
-      return true;
-    });
-
-    players.push(...newPagePlayers);
+    const newPagePlayers = addUniqueRankingPlayers(players, pagePlayers, seenRankingKeys);
     console.info("CPL ranking page loaded", {
       season: rankingSeason,
       page,
