@@ -256,7 +256,7 @@ h2 {
 }
 
 .community-ladder-teams-table {
-  min-width: 780px;
+  min-width: 860px;
 }
 
 .community-ladder-matches-table {
@@ -287,23 +287,36 @@ h2 {
 
 .community-ladder-teams-table th:nth-child(3),
 .community-ladder-teams-table td:nth-child(3) {
-  width: 25%;
+  width: 24%;
 }
 
 .community-ladder-teams-table th:nth-child(4),
 .community-ladder-teams-table td:nth-child(4) {
-  width: 13%;
+  width: 11%;
 }
 
 .community-ladder-teams-table th:nth-child(5),
 .community-ladder-teams-table td:nth-child(5) {
-  width: 12%;
-  text-align: right;
+  width: 10%;
+  text-align: center;
 }
 
 .community-ladder-teams-table th:nth-child(6),
 .community-ladder-teams-table td:nth-child(6) {
-  width: 32%;
+  width: 10%;
+  text-align: right;
+}
+
+.community-ladder-teams-table th:nth-child(7),
+.community-ladder-teams-table td:nth-child(7) {
+  width: 13%;
+  text-align: right;
+}
+
+.community-ladder-teams-table th:nth-child(8),
+.community-ladder-teams-table td:nth-child(8) {
+  width: 10%;
+  text-align: right;
 }
 
 .community-tournament-status-table th:nth-child(2),
@@ -491,7 +504,7 @@ h2 {
 
 .community-player-filters {
   display: grid;
-  grid-template-columns: 1fr 190px 200px;
+  grid-template-columns: 1fr auto 190px 200px;
   align-items: end;
 }
 
@@ -657,6 +670,46 @@ h2 {
 .community-ranking-trend.same {
   color: #ffcf70;
   background: rgba(255, 207, 112, 0.12);
+}
+
+.community-streak {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 42px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.community-streak-up {
+  color: #86e39f;
+  background: rgba(45, 138, 78, 0.2);
+}
+
+.community-streak-down {
+  color: #ff9a9a;
+  background: rgba(184, 55, 55, 0.18);
+}
+
+.community-streak-neutral {
+  color: #ffcf70;
+  background: rgba(255, 207, 112, 0.12);
+}
+
+.community-number-positive {
+  color: #86e39f;
+  font-weight: 800;
+}
+
+.community-number-negative {
+  color: #ff9a9a;
+  font-weight: 800;
+}
+
+.community-number-neutral {
+  color: rgba(255, 248, 201, 0.78);
+  font-weight: 800;
 }
 
 .community-logo {

@@ -228,6 +228,7 @@ const communityStatsState = {
   players: [],
   ladderEntries: [],
   ladderPlayers: [],
+  playerRankingType: "official",
   playerSearch: "",
   playerTeamId: "",
   playerSort: {
@@ -258,6 +259,7 @@ const communityLadderState = {
   ladderId: null,
   matches: [],
   matchCount: 0,
+  totalMatchCount: 0,
   pageCount: 0,
   liveWindow: false,
   lastUpdated: null
@@ -4071,14 +4073,26 @@ function buildCommunityDataUrl() {
   return `${CPL_PROXY_BASE}/communities/${COMMUNITY_ID}`;
 }
 
-function buildLadderDataUrl(ladderId) {
-  return `${CPL_PROXY_BASE}/ladders/${encodeURIComponent(ladderId)}`;
+function buildLadderDataUrl(ladderId, forceRefresh = false) {
+  const params = new URLSearchParams();
+
+  if (forceRefresh) {
+    params.set("refresh", "true");
+  }
+
+  const query = params.toString();
+  return `${CPL_PROXY_BASE}/ladders/${encodeURIComponent(ladderId)}${query ? `?${query}` : ""}`;
 }
 
-function buildLadderMatchesDataUrl(ladderId, forceRefresh = false) {
+function buildLadderMatchesDataUrl(ladderId, forceRefresh = false, teamIds = []) {
   const params = new URLSearchParams({
     limit: String(COMMUNITY_LADDER_MATCH_LIMIT)
   });
+  const uniqueTeamIds = Array.from(new Set(teamIds.map(id => String(id)).filter(Boolean)));
+
+  if (uniqueTeamIds.length) {
+    params.set("teamIds", uniqueTeamIds.join(","));
+  }
 
   if (forceRefresh) {
     params.set("refresh", "true");
@@ -5413,6 +5427,7 @@ function normalizeLadderEntry(rawEntry) {
     ladderWins: toFiniteNumberOrNull(firstDefined(rawEntry, ["wins", "ladderWins"])),
     ladderLosses: toFiniteNumberOrNull(firstDefined(rawEntry, ["losses", "ladderLosses"])),
     ladderRoundDifference: toFiniteNumberOrNull(firstDefined(rawEntry, ["roundDifference", "roundDiff", "ladderRoundDifference"])),
+    ladderBuchholz: toFiniteNumberOrNull(firstDefined(rawEntry, ["buchholz", "ladderBuchholz"])),
     ladderStreak: toFiniteNumberOrNull(firstDefined(rawEntry, ["streak", "ladderStreak"]))
   };
 }
@@ -5559,6 +5574,34 @@ function formatCommunityNumber(value) {
   return number === null ? "-" : new Intl.NumberFormat("en-US").format(number);
 }
 
+function renderCommunitySignedNumber(value) {
+  const number = toFiniteNumberOrNull(value);
+  if (number === null) return "-";
+
+  const className = number > 0
+    ? "community-number-positive"
+    : number < 0
+      ? "community-number-negative"
+      : "community-number-neutral";
+  const prefix = number > 0 ? "+" : "";
+
+  return `<span class="${className}">${prefix}${formatCommunityNumber(number)}</span>`;
+}
+
+function renderCommunityLadderStreak(value) {
+  const number = toFiniteNumberOrNull(value);
+  if (number === null) return "-";
+
+  const className = number > 0
+    ? "community-streak community-streak-up"
+    : number < 0
+      ? "community-streak community-streak-down"
+      : "community-streak community-streak-neutral";
+  const prefix = number > 0 ? "+" : "";
+
+  return `<span class="${className}">${prefix}${formatCommunityNumber(number)}</span>`;
+}
+
 function formatCommunityDecimal(value, digits = 2) {
   const number = toFiniteNumberOrNull(value);
   return number === null ? "-" : number.toFixed(digits);
@@ -5646,8 +5689,11 @@ function getFilteredCommunityPlayers() {
   const search = normalizeSearchValue(communityStatsState.playerSearch);
   const selectedTeamId = String(communityStatsState.playerTeamId || "");
   const { key, direction } = communityStatsState.playerSort;
+  const sourcePlayers = communityStatsState.playerRankingType === "ladder"
+    ? communityStatsState.ladderPlayers
+    : communityStatsState.players;
 
-  return [...communityStatsState.players]
+  return [...sourcePlayers]
     .filter(player => {
       const matchesTeam = !selectedTeamId || String(player.teamId) === selectedTeamId;
       const searchableNick = player.nick || player.name;
@@ -5806,6 +5852,15 @@ function renderLadderTeamName(teamId, teamName) {
     : escapeHtml(label);
 }
 
+function renderCommunityTeamNameLink(teamId, teamName) {
+  const teamUrl = buildCplTeamUrl(teamId);
+  const label = teamName || `Team ${teamId}`;
+
+  return teamUrl
+    ? `<a class="community-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
+    : escapeHtml(label);
+}
+
 function renderLadderNextMatch(team) {
   const match = getNextLadderMatchForTeam(team.teamId);
   if (!match) return "-";
@@ -5846,6 +5901,15 @@ function renderCommunityPlayerSortButtons() {
 
     button.classList.toggle("active", active);
     button.textContent = `${baseText}${active ? ` (${communityStatsState.playerSort.direction})` : ""}`;
+  });
+}
+
+function renderCommunityPlayerRankingTypeButtons() {
+  document.querySelectorAll("[data-community-player-ranking-type]").forEach(button => {
+    const type = button.dataset.communityPlayerRankingType === "ladder" ? "ladder" : "official";
+    const active = communityStatsState.playerRankingType === type;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
   });
 }
 
@@ -5918,9 +5982,13 @@ function renderCommunityPlayersTable() {
   if (!body) return;
 
   const players = getFilteredCommunityPlayers();
+  const isLadderRanking = communityStatsState.playerRankingType === "ladder";
 
   if (!players.length) {
-    body.innerHTML = `<tr><td colspan="10">${communityStatsState.loaded ? "No community players match the current filters." : "No ranking data loaded yet."}</td></tr>`;
+    const emptyText = isLadderRanking
+      ? (communityStatsState.loaded ? "No community ladder players match the current filters." : "No ladder ranking data loaded yet.")
+      : (communityStatsState.loaded ? "No community players match the current filters." : "No ranking data loaded yet.");
+    body.innerHTML = `<tr><td colspan="10">${emptyText}</td></tr>`;
     return;
   }
 
@@ -5988,7 +6056,7 @@ function renderCommunityLadderStatus() {
   if (communityLadderState.loaded) {
     const liveText = communityLadderState.liveWindow ? "live window" : "daily cache";
     status.className = "community-status community-status-success";
-    status.textContent = `Loaded ${communityStatsState.ladderPlayers.length} ladder players and ${communityLadderState.matchCount} matches across ${communityLadderState.pageCount || 1} page(s). Source: standings ${communityStatsState.ladderSource || "-"}, player ranking ${communityStatsState.ladderRankingSource || "-"}, matches ${communityLadderState.source || "-"} (${liveText}).`;
+    status.textContent = `Showing ${formatCommunityNumber(communityLadderState.matchCount)} community ladder matches. Sources: standings ${communityStatsState.ladderSource || "-"}, matches ${communityLadderState.source || "-"} (${liveText}).`;
     return;
   }
 
@@ -6008,7 +6076,7 @@ function renderCommunityLadderTeamsTable() {
     });
 
   if (!teams.length) {
-    body.innerHTML = `<tr><td colspan="6">${communityStatsState.loaded ? "No community teams available." : "No ladder team data loaded yet."}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8">${communityStatsState.loaded ? "No community teams available." : "No ladder team data loaded yet."}</td></tr>`;
     return;
   }
 
@@ -6016,9 +6084,7 @@ function renderCommunityLadderTeamsTable() {
     const record = team.ladderWins === null && team.ladderLosses === null
       ? "-"
       : `${formatCommunityNumber(team.ladderWins)}-${formatCommunityNumber(team.ladderLosses)}`;
-    const roundDiff = team.ladderRoundDifference === null
-      ? ""
-      : `<span class="community-subtext">RD ${formatCommunityNumber(team.ladderRoundDifference)}</span>`;
+    const roundDiff = renderCommunitySignedNumber(team.ladderRoundDifference);
     const logoHtml = team.logoUrl
       ? `<img class="community-logo" src="${escapeHtml(team.logoUrl)}" alt="${escapeHtml(team.teamName)} logo" loading="lazy">`
       : '<span class="community-empty-logo">-</span>';
@@ -6027,53 +6093,12 @@ function renderCommunityLadderTeamsTable() {
       <tr>
         <td>${team.ladderPosition === null ? "-" : `#${formatCommunityNumber(team.ladderPosition)}`}</td>
         <td>${logoHtml}</td>
-        <td><strong>${renderLadderTeamName(team.teamId, team.teamName)}</strong><span class="community-subtext">${formatCommunityNumber(team.ladderMatches)} matches${team.ladderStreak === null ? "" : ` - streak ${formatCommunityNumber(team.ladderStreak)}`}</span></td>
-        <td>${escapeHtml(record)}${roundDiff}</td>
+        <td><strong>${renderCommunityTeamNameLink(team.teamId, team.teamName)}</strong></td>
+        <td>${escapeHtml(record)}</td>
+        <td>${renderCommunityLadderStreak(team.ladderStreak)}</td>
+        <td>${roundDiff}</td>
+        <td>${formatCommunityNumber(team.ladderBuchholz)}</td>
         <td>${formatCommunityNumber(team.ladderPoints)}</td>
-        <td>${renderLadderNextMatch(team)}</td>
-      </tr>
-    `;
-  }).join("");
-}
-
-function renderCommunityLadderPlayersTable() {
-  const body = document.getElementById("community-ladder-players-body");
-  if (!body) return;
-
-  const players = getSortedCommunityLadderPlayers();
-
-  if (!players.length) {
-    body.innerHTML = `<tr><td colspan="10">${communityLadderState.loaded ? "No community ladder players found." : "No ladder player data loaded yet."}</td></tr>`;
-    return;
-  }
-
-  body.innerHTML = players.map((player, index) => {
-    const teamUrl = buildCplTeamUrl(player.teamId);
-    const playerUrl = buildCplPlayerUrl(player.teamId, player.playerId);
-    const nickLabel = player.nick || player.name || "-";
-    const nickHtml = playerUrl
-      ? `<a class="community-link" href="${escapeHtml(playerUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(nickLabel)}</a>`
-      : escapeHtml(nickLabel);
-    const teamName = player.teamName || "Team";
-    const logoHtml = player.teamLogoUrl
-      ? `<img class="community-logo community-player-team-logo" src="${escapeHtml(player.teamLogoUrl)}" alt="${escapeHtml(teamName)} logo" title="${escapeHtml(teamName)}" loading="lazy">`
-      : `<span class="community-empty-logo community-player-team-logo" title="${escapeHtml(teamName)}">-</span>`;
-    const teamLogoHtml = teamUrl
-      ? `<a class="community-logo-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(teamName)}">${logoHtml}</a>`
-      : logoHtml;
-
-    return `
-      <tr>
-        <td>${formatCommunityNumber(index + 1)}</td>
-        <td>${player.rank === null ? "-" : `#${formatCommunityNumber(player.rank)}`}</td>
-        <td>${teamLogoHtml}</td>
-        <td><strong>${nickHtml}</strong></td>
-        <td>${formatCommunityNumber(player.games)}</td>
-        <td>${formatCommunityDecimal(player.kdRatio)}</td>
-        <td>${formatCommunityPercentage(player.hsPercentage)}</td>
-        <td>${formatCommunityNumber(player.kills)}</td>
-        <td>${formatCommunityNumber(player.deaths)}</td>
-        <td>${formatCommunityNumber(player.mvps)}</td>
       </tr>
     `;
   }).join("");
@@ -6143,7 +6168,6 @@ function renderCommunityLadderMatchesTables() {
 function renderCommunityLadder() {
   renderCommunityLadderStatus();
   renderCommunityLadderTeamsTable();
-  renderCommunityLadderPlayersTable();
   renderCommunityLadderMatchesTables();
 }
 
@@ -6520,7 +6544,7 @@ function renderCommunityStatus() {
 
   if (communityStatsState.loaded) {
     status.className = "community-status community-status-success";
-    status.textContent = `Loaded ${communityStatsState.teams.length} teams, ${communityStatsState.players.length} official players and ${communityStatsState.ladderPlayers.length} ladder players. Refresh updates teams and ladder values; player stats stay on their daily ranking caches. Sources: community ${communityStatsState.communitySource || "-"}, ladder ${communityStatsState.ladderSource || "-"}, official ranking ${communityStatsState.rankingSource || "-"}, ladder ranking ${communityStatsState.ladderRankingSource || "-"}.`;
+    status.textContent = `Loaded ${communityStatsState.teams.length} teams and ${communityStatsState.players.length} official players. Refresh updates teams and ladder standings; player rankings use their daily caches. Sources: community ${communityStatsState.communitySource || "-"}, standings ${communityStatsState.ladderSource || "-"}, official ranking ${communityStatsState.rankingSource || "-"}.`;
     return;
   }
 
@@ -6551,6 +6575,7 @@ function renderCommunityStats() {
   renderCommunityPanelNavigation();
   renderCommunityTeamSortButtons();
   renderCommunityPlayerSortButtons();
+  renderCommunityPlayerRankingTypeButtons();
   renderCommunityTeamFilter();
   renderCommunityTeamsTable();
   renderCommunityPlayersTable();
@@ -6626,7 +6651,7 @@ async function loadCommunityStats(options = {}) {
         try {
           communityStatsState.warning = "Loading ladder data...";
           renderCommunityStatus();
-          ladderData = await fetchJsonWithRetry(buildLadderDataUrl(ladderId), {
+          ladderData = await fetchJsonWithRetry(buildLadderDataUrl(ladderId, forceTeamRefresh), {
             headers: {
               "Accept": "application/json"
             }
@@ -6667,7 +6692,7 @@ async function loadCommunityStats(options = {}) {
     let communityPlayers = syncCommunityPlayersWithTeams(communityStatsState.players, teamsWithTrends);
     let communityLadderPlayers = syncCommunityPlayersWithTeams(communityStatsState.ladderPlayers, teamsWithTrends);
     const shouldLoadPlayers = refreshPlayers || !communityPlayers.length || communityStatsState.playersSeason !== currentSeason;
-    const shouldLoadLadderPlayers = loadLadder && communityStatsState.activePanel === "ladder" && (
+    const shouldLoadLadderPlayers = communityStatsState.activePanel === "players" && communityStatsState.playerRankingType === "ladder" && (
       refreshPlayers || !communityLadderPlayers.length || communityStatsState.ladderPlayersSeason !== currentSeason
     );
 
@@ -6820,17 +6845,44 @@ async function ensureCommunityLadderPlayers(forceRefresh = false) {
     return;
   }
 
-  communityLadderState.warning = "Loading ladder player rankings...";
-  renderCommunityLadder();
+  communityStatsState.warning = "Loading daily ladder player rankings...";
+  renderCommunityStatus();
 
   const ladderRankingResult = await loadRankingDataWithCache(forceRefresh, message => {
-    communityLadderState.warning = message;
-    renderCommunityLadder();
+    communityStatsState.warning = message;
+    renderCommunityStatus();
   }, currentSeason, "ladder");
 
   communityStatsState.ladderPlayers = normalizeCommunityRankingPlayers(ladderRankingResult.players, communityStatsState.teams);
   communityStatsState.ladderRankingSource = ladderRankingResult.source;
   communityStatsState.ladderPlayersSeason = currentSeason;
+  communityStatsState.warning = "";
+}
+
+async function ensureActiveCommunityPlayerRanking(forceRefresh = false) {
+  if (communityStatsState.playerRankingType !== "ladder") {
+    renderCommunityStats();
+    return;
+  }
+
+  try {
+    if (!communityStatsState.loaded && !communityStatsState.loading) {
+      await loadCommunityStats({
+        forceTeamRefresh: false,
+        refreshPlayers: true,
+        forceRankingRefresh: false,
+        loadLadder: false,
+        loadTournaments: false
+      });
+    }
+
+    await ensureCommunityLadderPlayers(forceRefresh);
+  } catch (error) {
+    console.warn("CPL community ladder player ranking failed", error);
+    communityStatsState.warning = `Ladder player ranking failed: ${error?.message || error}.`;
+  } finally {
+    renderCommunityStats();
+  }
 }
 
 async function loadCommunityLadder(forceRefresh = false) {
@@ -6857,24 +6909,12 @@ async function loadCommunityLadder(forceRefresh = false) {
 
   try {
     const warnings = [];
-
-    try {
-      await ensureCommunityLadderPlayers(forceRefresh);
-    } catch (error) {
-      console.warn("CPL ladder player ranking failed", error);
-      const demoRankingPlayers = getCommunityDemoRankingPlayers(communityStatsState.teams);
-      communityStatsState.ladderPlayers = normalizeCommunityRankingPlayers(demoRankingPlayers, communityStatsState.teams);
-      communityStatsState.ladderRankingSource = "demo";
-      communityStatsState.ladderPlayersSeason = seasonState.season;
-      warnings.push(`Ladder player ranking failed: ${error?.message || error}. Showing demo ladder players.`);
-      communityLadderState.warning = warnings.join(" ");
-    }
-
     let data;
     let source = "api";
+    const teamIds = communityStatsState.teams.map(team => team.teamId).filter(Boolean);
 
     try {
-      data = await fetchJsonWithRetry(buildLadderMatchesDataUrl(ladderId, forceRefresh), {
+      data = await fetchJsonWithRetry(buildLadderMatchesDataUrl(ladderId, forceRefresh, teamIds), {
         headers: {
           "Accept": "application/json"
         }
@@ -6891,6 +6931,7 @@ async function loadCommunityLadder(forceRefresh = false) {
 
     communityLadderState.matches = matches;
     communityLadderState.matchCount = toFiniteNumberOrNull(data?.matchCount) ?? matches.length;
+    communityLadderState.totalMatchCount = toFiniteNumberOrNull(data?.totalMatchCount) ?? communityLadderState.matchCount;
     communityLadderState.pageCount = toFiniteNumberOrNull(data?.pageCount) ?? 1;
     communityLadderState.liveWindow = Boolean(data?.liveWindow);
     communityLadderState.source = data?.source || source;
@@ -6906,6 +6947,7 @@ async function loadCommunityLadder(forceRefresh = false) {
     communityLadderState.warning = "";
     communityLadderState.matches = [];
     communityLadderState.matchCount = 0;
+    communityLadderState.totalMatchCount = 0;
     communityLadderState.pageCount = 0;
     communityLadderState.liveWindow = false;
   } finally {
@@ -7004,6 +7046,10 @@ function ensureCommunityStatsLoaded() {
     loadCommunityLadder(false);
   }
 
+  if (communityStatsState.activePanel === "players" && communityStatsState.playerRankingType === "ladder") {
+    ensureActiveCommunityPlayerRanking(false);
+  }
+
   if (communityStatsState.activePanel === "tournaments" && !communityTournamentState.loaded && !communityTournamentState.loading) {
     loadCommunityTournaments(false);
   }
@@ -7032,7 +7078,34 @@ function setupCommunityStats() {
   });
 
   document.getElementById("community-ladder-refresh-button")?.addEventListener("click", () => {
-    loadCommunityLadder(true);
+    if (communityStatsState.loading || communityLadderState.loading) return;
+
+    loadCommunityStats({
+      forceTeamRefresh: true,
+      refreshPlayers: false,
+      forceRankingRefresh: false,
+      loadLadder: false,
+      loadTournaments: false
+    }).then(() => {
+      communityLadderState.loaded = false;
+      return loadCommunityLadder(true);
+    }).catch(error => {
+      console.error("CPL community ladder refresh failed", error);
+      communityLadderState.error = error?.message || "Ladder refresh failed.";
+      communityLadderState.loading = false;
+      renderCommunityLadder();
+    });
+  });
+
+  document.querySelectorAll("[data-community-player-ranking-type]").forEach(button => {
+    button.addEventListener("click", () => {
+      communityStatsState.playerRankingType = button.dataset.communityPlayerRankingType === "ladder" ? "ladder" : "official";
+      renderCommunityStats();
+
+      if (communityStatsState.playerRankingType === "ladder") {
+        ensureActiveCommunityPlayerRanking(false);
+      }
+    });
   });
 
   document.querySelectorAll("[data-community-tournament-view]").forEach(button => {
@@ -7055,6 +7128,10 @@ function setupCommunityStats() {
 
       if (communityStatsState.activePanel === "ladder" && !communityLadderState.loaded && !communityLadderState.loading) {
         loadCommunityLadder(false);
+      }
+
+      if (communityStatsState.activePanel === "players" && communityStatsState.playerRankingType === "ladder") {
+        ensureActiveCommunityPlayerRanking(false);
       }
 
       if (communityStatsState.activePanel === "tournaments" && !communityTournamentState.loaded && !communityTournamentState.loading) {

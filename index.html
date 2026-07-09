@@ -244,37 +244,14 @@
                     <th>Logo</th>
                     <th>Team</th>
                     <th>Record</th>
+                    <th>Streak</th>
+                    <th>RD</th>
+                    <th>Buchholz</th>
                     <th>Points</th>
-                    <th>Next Match</th>
                   </tr>
                 </thead>
                 <tbody id="community-ladder-teams-body">
-                  <tr><td colspan="6">No ladder data loaded yet.</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="community-ladder-table-section">
-            <h3>Community Ladder Player Ranking</h3>
-            <div class="community-table-wrap community-player-table-wrap">
-              <table class="community-table community-player-table community-ladder-player-table">
-                <thead>
-                  <tr>
-                    <th>C-Rank</th>
-                    <th>Rank</th>
-                    <th>Team</th>
-                    <th>Nick</th>
-                    <th>Games</th>
-                    <th>K/D</th>
-                    <th>HS%</th>
-                    <th>Kills</th>
-                    <th>Deaths</th>
-                    <th>MVPs</th>
-                  </tr>
-                </thead>
-                <tbody id="community-ladder-players-body">
-                  <tr><td colspan="10">No ladder player data loaded yet.</td></tr>
+                  <tr><td colspan="8">No ladder data loaded yet.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -421,6 +398,10 @@
       <section class="panel community-section" data-community-panel="players" hidden>
         <div class="community-section-header community-player-filters">
           <h2>Player Ranking</h2>
+          <div class="community-toggle-group" role="group" aria-label="Player ranking type">
+            <button class="community-toggle-button" type="button" data-community-player-ranking-type="official">All Officials</button>
+            <button class="community-toggle-button" type="button" data-community-player-ranking-type="ladder">Ladder</button>
+          </div>
           <label>
             Team
             <select id="community-player-team-filter">
