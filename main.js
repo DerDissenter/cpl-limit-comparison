@@ -134,6 +134,9 @@ const COMMUNITY_TOURNAMENT_FETCH_LIMIT = 16;
 const COMMUNITY_LADDER_MATCH_LIMIT = 100;
 const COMMUNITY_LADDER_RECENT_MATCH_LIMIT = 20;
 const COMMUNITY_LADDER_UPCOMING_MATCH_LIMIT = 20;
+const COMMUNITY_LEAGUE_MATCH_LIMIT = 100;
+const COMMUNITY_LEAGUE_RECENT_MATCH_LIMIT = 20;
+const COMMUNITY_LEAGUE_UPCOMING_MATCH_LIMIT = 20;
 const COMMUNITY_FALLBACK_TEAM_IDS = [4355, 3147, 1394, 2522, 143, 3277];
 const CPL_MEDIA_TEAM_BASE = "https://media.cplmanager.com/teams";
 const DIVISION_MAP = {
@@ -227,6 +230,7 @@ const communityStatsState = {
   teams: [],
   players: [],
   ladderEntries: [],
+  leagueEntries: [],
   ladderPlayers: [],
   playerRankingType: "official",
   playerSearch: "",
@@ -243,6 +247,7 @@ const communityStatsState = {
   ladderId: null,
   communitySource: "",
   ladderSource: "",
+  leagueSource: "",
   rankingSource: "",
   ladderRankingSource: "",
   playersSeason: null,
@@ -257,6 +262,21 @@ const communityLadderState = {
   warning: "",
   source: "",
   ladderId: null,
+  matches: [],
+  matchCount: 0,
+  totalMatchCount: 0,
+  pageCount: 0,
+  liveWindow: false,
+  lastUpdated: null
+};
+
+const communityLeagueState = {
+  loaded: false,
+  loading: false,
+  error: "",
+  warning: "",
+  source: "",
+  entries: [],
   matches: [],
   matchCount: 0,
   totalMatchCount: 0,
@@ -4101,6 +4121,45 @@ function buildLadderMatchesDataUrl(ladderId, forceRefresh = false, teamIds = [])
   return `${CPL_PROXY_BASE}/ladders/${encodeURIComponent(ladderId)}/matches?${params.toString()}`;
 }
 
+function buildLeagueDataUrl(leagueId, forceRefresh = false) {
+  const params = new URLSearchParams();
+
+  if (forceRefresh) {
+    params.set("refresh", "true");
+  }
+
+  const query = params.toString();
+  return `${CPL_PROXY_BASE}/leagues/${encodeURIComponent(leagueId)}${query ? `?${query}` : ""}`;
+}
+
+function buildLeagueTeamsDataUrl(leagueId, forceRefresh = false) {
+  const params = new URLSearchParams();
+
+  if (forceRefresh) {
+    params.set("refresh", "true");
+  }
+
+  const query = params.toString();
+  return `${CPL_PROXY_BASE}/leagues/${encodeURIComponent(leagueId)}/teams${query ? `?${query}` : ""}`;
+}
+
+function buildLeagueMatchesDataUrl(leagueId, forceRefresh = false, teamIds = []) {
+  const params = new URLSearchParams({
+    limit: String(COMMUNITY_LEAGUE_MATCH_LIMIT)
+  });
+  const uniqueTeamIds = Array.from(new Set(teamIds.map(id => String(id)).filter(Boolean)));
+
+  if (uniqueTeamIds.length) {
+    params.set("teamIds", uniqueTeamIds.join(","));
+  }
+
+  if (forceRefresh) {
+    params.set("refresh", "true");
+  }
+
+  return `${CPL_PROXY_BASE}/leagues/${encodeURIComponent(leagueId)}/matches?${params.toString()}`;
+}
+
 function buildChampionshipDataUrl(season) {
   return `${CPL_PROXY_BASE}/championships/${encodeURIComponent(season)}/__data.json?x-sveltekit-invalidated=001`;
 }
@@ -5373,7 +5432,14 @@ function normalizeCommunityTeam(rawTeam, communityData = {}) {
     teamName,
     username,
     ranking: toFiniteNumberOrNull(firstDefined(rawTeam, ["ranking", "team.ranking"])),
+    leagueId: toFiniteNumberOrNull(firstDefined(rawTeam, ["leagueId", "team.leagueId"])),
     leaguePosition: toFiniteNumberOrNull(firstDefined(rawTeam, ["leaguePosition", "team.leaguePosition"])),
+    leaguePoints: null,
+    leagueGames: null,
+    leagueWins: null,
+    leagueDraws: null,
+    leagueLosses: null,
+    leagueRoundDifference: null,
     division,
     divisionName,
     divisionIconUrl: divisionIconUrl || buildDivisionIconUrl(divisionName),
@@ -5446,12 +5512,68 @@ function normalizeLadderEntries(rawData) {
   });
 }
 
+function getLeagueEntryArray(rawData) {
+  if (Array.isArray(rawData)) return rawData;
+
+  return getArrayCandidate(rawData, [
+    "teams",
+    "entries",
+    "participants",
+    "leagueTeams",
+    "data.teams",
+    "result.teams",
+    "items",
+    "results"
+  ]) || findArrayByEntryShape(rawData, isLadderEntryLike) || [];
+}
+
+function normalizeLeagueEntry(rawEntry, fallbackLeagueId = null) {
+  const teamId = firstDefined(rawEntry, ["teamId", "team.id"]);
+  if (teamId === null) return null;
+
+  return {
+    teamId: toFiniteNumberOrNull(teamId) ?? String(teamId),
+    teamName: firstDefined(rawEntry, ["team.name", "teamName", "name"]) || "",
+    leagueId: toFiniteNumberOrNull(firstDefined(rawEntry, ["leagueId"])) ?? fallbackLeagueId,
+    leaguePosition: toFiniteNumberOrNull(firstDefined(rawEntry, ["position", "leaguePosition", "rank"])),
+    leaguePoints: toFiniteNumberOrNull(firstDefined(rawEntry, ["points", "leaguePoints"])),
+    leagueGames: toFiniteNumberOrNull(firstDefined(rawEntry, ["gamesCount", "games", "leagueGames"])),
+    leagueWins: toFiniteNumberOrNull(firstDefined(rawEntry, ["winsCount", "wins", "leagueWins"])),
+    leagueDraws: toFiniteNumberOrNull(firstDefined(rawEntry, ["drawsCount", "draws", "leagueDraws"])),
+    leagueLosses: toFiniteNumberOrNull(firstDefined(rawEntry, ["lossesCount", "losses", "leagueLosses"])),
+    leagueRoundDifference: toFiniteNumberOrNull(firstDefined(rawEntry, ["roundDifference", "roundDiff", "leagueRoundDifference"]))
+  };
+}
+
+function normalizeLeagueEntries(rawData, fallbackLeagueId = null) {
+  const entries = getLeagueEntryArray(rawData)
+    .map(entry => normalizeLeagueEntry(entry, fallbackLeagueId))
+    .filter(Boolean);
+  const seen = new Set();
+
+  return entries.filter(entry => {
+    const key = `${entry.leagueId || ""}:${entry.teamId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function joinCommunityTeamsWithLadder(teams, ladderEntries) {
   const ladderByTeamId = new Map(ladderEntries.map(entry => [String(entry.teamId), entry]));
 
   return teams.map(team => ({
     ...team,
     ...(ladderByTeamId.get(String(team.teamId)) || {})
+  }));
+}
+
+function joinCommunityTeamsWithLeague(teams, leagueEntries) {
+  const leagueByTeamId = new Map(leagueEntries.map(entry => [String(entry.teamId), entry]));
+
+  return teams.map(team => ({
+    ...team,
+    ...(leagueByTeamId.get(String(team.teamId)) || {})
   }));
 }
 
@@ -6171,6 +6293,279 @@ function renderCommunityLadder() {
   renderCommunityLadderMatchesTables();
 }
 
+function getCommunityLeagueIds() {
+  return Array.from(new Set(
+    communityStatsState.teams
+      .map(team => toFiniteNumberOrNull(team.leagueId))
+      .filter(leagueId => leagueId !== null)
+      .map(String)
+  ));
+}
+
+function getCommunityTeamsForLeague(leagueId) {
+  const id = String(leagueId);
+  return communityStatsState.teams.filter(team => String(team.leagueId) === id);
+}
+
+function getLeagueEntryByTeamId(teamId) {
+  const id = String(teamId);
+  return communityLeagueState.entries.find(entry => String(entry.teamId) === id)
+    || communityStatsState.leagueEntries.find(entry => String(entry.teamId) === id)
+    || communityStatsState.teams.find(team => String(team.teamId) === id)
+    || null;
+}
+
+function getLeaguePositionForTeamId(teamId) {
+  const entry = getLeagueEntryByTeamId(teamId);
+  return toFiniteNumberOrNull(entry?.leaguePosition);
+}
+
+function formatLeaguePositionLabel(teamId) {
+  const position = getLeaguePositionForTeamId(teamId);
+  return position === null ? "#-" : `#${formatCommunityNumber(position)}`;
+}
+
+function normalizeLeagueMatchesData(rawData) {
+  const rawMatches = Array.isArray(rawData?.matches)
+    ? rawData.matches
+    : Array.isArray(rawData)
+      ? rawData
+      : [];
+  const seen = new Set();
+
+  return rawMatches
+    .map(match => normalizeTournamentMatch(match, { stageName: "League" }))
+    .filter(Boolean)
+    .filter(match => {
+      const key = String(match.id);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function getCommunityTeamForLeagueMatch(match) {
+  if (isCommunityTeamId(match.homeTeamId)) return getCommunityTeamById(match.homeTeamId);
+  if (isCommunityTeamId(match.awayTeamId)) return getCommunityTeamById(match.awayTeamId);
+  return null;
+}
+
+function getLeagueMatchTeamInfo(match, side) {
+  const teamId = side === "home" ? match.homeTeamId : match.awayTeamId;
+  const matchTeamName = side === "home" ? match.homeTeamName : match.awayTeamName;
+  const communityTeam = getCommunityTeamById(teamId);
+  const leagueEntry = getLeagueEntryByTeamId(teamId);
+
+  return {
+    teamId,
+    teamName: communityTeam?.teamName || leagueEntry?.teamName || matchTeamName || `Team ${teamId}`,
+    position: getLeaguePositionForTeamId(teamId)
+  };
+}
+
+function getLeagueOpponentInfo(match, teamId) {
+  const teamIsHome = String(match.homeTeamId) === String(teamId);
+  return getLeagueMatchTeamInfo(match, teamIsHome ? "away" : "home");
+}
+
+function isPlayedLeagueMatch(match) {
+  return match.homeScore !== null && match.awayScore !== null;
+}
+
+function isUpcomingLeagueMatch(match, now = new Date()) {
+  const date = new Date(match.date || "");
+  return !isPlayedLeagueMatch(match) && !Number.isNaN(date.getTime()) && date >= now;
+}
+
+function getCommunityLeagueMatchRows(kind, limit) {
+  const seen = new Set();
+  const now = new Date();
+  const rows = [];
+
+  communityLeagueState.matches.forEach(match => {
+    const team = getCommunityTeamForLeagueMatch(match);
+    if (!team) return;
+    if (seen.has(String(match.id))) return;
+
+    const include = kind === "played"
+      ? isPlayedLeagueMatch(match)
+      : isUpcomingLeagueMatch(match, now);
+    if (!include) return;
+
+    seen.add(String(match.id));
+    rows.push({
+      match,
+      team,
+      opponent: getLeagueOpponentInfo(match, team.teamId)
+    });
+  });
+
+  return rows
+    .sort((a, b) => kind === "played"
+      ? -compareTournamentMatches(a.match, b.match)
+      : compareTournamentMatches(a.match, b.match))
+    .slice(0, limit);
+}
+
+function renderLeagueTeamName(teamId, teamName) {
+  const teamUrl = buildCplTeamUrl(teamId);
+  const label = `${formatLeaguePositionLabel(teamId)} ${teamName || `Team ${teamId}`}`;
+
+  return teamUrl
+    ? `<a class="community-link" href="${escapeHtml(teamUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
+    : escapeHtml(label);
+}
+
+function renderCommunityLeagueStatus() {
+  const status = document.getElementById("community-league-status");
+  const refreshButton = document.getElementById("community-league-refresh-button");
+
+  if (refreshButton) {
+    refreshButton.disabled = communityLeagueState.loading;
+    refreshButton.textContent = communityLeagueState.loading ? "Loading..." : "Refresh League";
+  }
+
+  if (!status) return;
+
+  if (communityLeagueState.loading) {
+    status.className = "community-status community-status-loading";
+    status.textContent = communityLeagueState.warning || "Loading league data...";
+    return;
+  }
+
+  if (communityLeagueState.error) {
+    status.className = "community-status community-status-error";
+    status.textContent = communityLeagueState.error;
+    return;
+  }
+
+  if (communityLeagueState.warning) {
+    status.className = "community-status community-status-warning";
+    status.textContent = communityLeagueState.warning;
+    return;
+  }
+
+  if (communityLeagueState.loaded) {
+    const liveText = communityLeagueState.liveWindow ? "live window" : "daily cache";
+    status.className = "community-status community-status-success";
+    status.textContent = `Showing ${formatCommunityNumber(communityLeagueState.matchCount)} community league matches across ${formatCommunityNumber(getCommunityLeagueIds().length)} league(s). Source: ${communityLeagueState.source || "-"} (${liveText}).`;
+    return;
+  }
+
+  status.className = "community-status";
+  status.textContent = "League data not loaded yet.";
+}
+
+function renderCommunityLeagueTeamsTable() {
+  const body = document.getElementById("community-league-teams-body");
+  if (!body) return;
+
+  const teams = [...communityStatsState.teams]
+    .sort((a, b) => {
+      const divisionSort = compareNullableNumbers(a.division, b.division, "desc");
+      if (divisionSort !== 0) return divisionSort;
+      const leagueSort = compareNullableNumbers(a.leagueId, b.leagueId, "asc");
+      if (leagueSort !== 0) return leagueSort;
+      const positionSort = compareNullableNumbers(a.leaguePosition, b.leaguePosition, "asc");
+      if (positionSort !== 0) return positionSort;
+      return String(a.teamName || "").localeCompare(String(b.teamName || ""));
+    });
+
+  if (!teams.length) {
+    body.innerHTML = `<tr><td colspan="7">${communityStatsState.loaded ? "No community teams available." : "No league team data loaded yet."}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = teams.map(team => {
+    const logoHtml = team.logoUrl
+      ? `<img class="community-logo" src="${escapeHtml(team.logoUrl)}" alt="${escapeHtml(team.teamName)} logo" loading="lazy">`
+      : '<span class="community-empty-logo">-</span>';
+    const record = team.leagueWins === null && team.leagueDraws === null && team.leagueLosses === null
+      ? "-"
+      : `${formatCommunityNumber(team.leagueWins)}-${formatCommunityNumber(team.leagueDraws)}-${formatCommunityNumber(team.leagueLosses)}`;
+    const leagueLabel = `${team.divisionName || "League"} ${team.leagueId ? `#${formatCommunityNumber(team.leagueId)}` : ""}`.trim();
+
+    return `
+      <tr>
+        <td>${team.leaguePosition === null ? "-" : `#${formatCommunityNumber(team.leaguePosition)}`}</td>
+        <td>${logoHtml}</td>
+        <td><strong>${renderCommunityTeamNameLink(team.teamId, team.teamName)}</strong></td>
+        <td>${escapeHtml(leagueLabel || "-")}</td>
+        <td>${escapeHtml(record)}</td>
+        <td>${renderCommunitySignedNumber(team.leagueRoundDifference)}</td>
+        <td>${formatCommunityNumber(team.leaguePoints)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderCommunityLeagueResultRow(row) {
+  const { match, team, opponent } = row;
+  const matchUrl = buildCplMatchUrl(match.id);
+  const outcome = getMatchOutcomeForTeam(match, team.teamId);
+  const rowClass = outcome ? ` class="community-match-outcome-${outcome}"` : "";
+  const scoreHtml = match.homeScore !== null && match.awayScore !== null
+    ? `<span class="community-score"><span>${formatCommunityNumber(match.homeScore)}</span><span>:</span><span>${formatCommunityNumber(match.awayScore)}</span></span>`
+    : "-";
+  const opponentText = `vs ${formatLeaguePositionLabel(opponent.teamId)} ${opponent.teamName}`;
+  const opponentHtml = matchUrl
+    ? `<a class="community-link" href="${escapeHtml(matchUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(opponentText)}</a>`
+    : escapeHtml(opponentText);
+
+  return `
+    <tr${rowClass}>
+      <td>${escapeHtml(formatTournamentDateTime(match.date))}</td>
+      <td><strong>${renderLeagueTeamName(team.teamId, team.teamName)}</strong></td>
+      <td>${opponentHtml}</td>
+      <td>${scoreHtml}</td>
+      <td>${escapeHtml(formatTournamentMapName(match.map))}</td>
+    </tr>
+  `;
+}
+
+function renderCommunityLeagueUpcomingRow(row) {
+  const { match, team, opponent } = row;
+  const matchUrl = buildCplMatchUrl(match.id);
+  const opponentText = `vs ${formatLeaguePositionLabel(opponent.teamId)} ${opponent.teamName}`;
+  const opponentHtml = matchUrl
+    ? `<a class="community-link" href="${escapeHtml(matchUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(opponentText)}</a>`
+    : escapeHtml(opponentText);
+
+  return `
+    <tr>
+      <td>${escapeHtml(formatTournamentDateTime(match.date))}</td>
+      <td><strong>${renderLeagueTeamName(team.teamId, team.teamName)}</strong></td>
+      <td>${opponentHtml}</td>
+      <td>${escapeHtml(formatTournamentMapName(match.map))}</td>
+    </tr>
+  `;
+}
+
+function renderCommunityLeagueMatchesTables() {
+  const resultsBody = document.getElementById("community-league-results-body");
+  const upcomingBody = document.getElementById("community-league-upcoming-body");
+
+  if (resultsBody) {
+    const rows = getCommunityLeagueMatchRows("played", COMMUNITY_LEAGUE_RECENT_MATCH_LIMIT);
+    resultsBody.innerHTML = rows.length
+      ? rows.map(renderCommunityLeagueResultRow).join("")
+      : `<tr><td colspan="5">${communityLeagueState.loaded ? "No league results found for community teams." : "No league results loaded yet."}</td></tr>`;
+  }
+
+  if (upcomingBody) {
+    const rows = getCommunityLeagueMatchRows("upcoming", COMMUNITY_LEAGUE_UPCOMING_MATCH_LIMIT);
+    upcomingBody.innerHTML = rows.length
+      ? rows.map(renderCommunityLeagueUpcomingRow).join("")
+      : `<tr><td colspan="4">${communityLeagueState.loaded ? "No upcoming league matches found for community teams." : "No upcoming league matches loaded yet."}</td></tr>`;
+  }
+}
+
+function renderCommunityLeague() {
+  renderCommunityLeagueStatus();
+  renderCommunityLeagueTeamsTable();
+  renderCommunityLeagueMatchesTables();
+}
+
 function formatTournamentLabel(value) {
   const text = String(value || "").trim();
   if (!text) return "-";
@@ -6544,7 +6939,7 @@ function renderCommunityStatus() {
 
   if (communityStatsState.loaded) {
     status.className = "community-status community-status-success";
-    status.textContent = `Loaded ${communityStatsState.teams.length} teams and ${communityStatsState.players.length} official players. Refresh updates teams and ladder standings; player rankings use their daily caches. Sources: community ${communityStatsState.communitySource || "-"}, standings ${communityStatsState.ladderSource || "-"}, official ranking ${communityStatsState.rankingSource || "-"}.`;
+    status.textContent = `Loaded ${communityStatsState.teams.length} teams and ${communityStatsState.players.length} official players. Refresh updates teams and competition standings; player rankings use their daily caches. Sources: community ${communityStatsState.communitySource || "-"}, ladder ${communityStatsState.ladderSource || "-"}, official ranking ${communityStatsState.rankingSource || "-"}.`;
     return;
   }
 
@@ -6580,6 +6975,7 @@ function renderCommunityStats() {
   renderCommunityTeamsTable();
   renderCommunityPlayersTable();
   renderCommunityLadder();
+  renderCommunityLeague();
   renderCommunityTournaments();
 }
 
@@ -6590,6 +6986,7 @@ function normalizeCommunityLoadOptions(options) {
       refreshPlayers: true,
       forceRankingRefresh: options,
       loadLadder: true,
+      loadLeague: true,
       loadTournaments: true
     };
   }
@@ -6599,6 +6996,7 @@ function normalizeCommunityLoadOptions(options) {
     refreshPlayers: options?.refreshPlayers !== false,
     forceRankingRefresh: Boolean(options?.forceRankingRefresh),
     loadLadder: options?.loadLadder !== false,
+    loadLeague: options?.loadLeague !== false,
     loadTournaments: options?.loadTournaments !== false
   };
 }
@@ -6606,7 +7004,7 @@ function normalizeCommunityLoadOptions(options) {
 async function loadCommunityStats(options = {}) {
   if (communityStatsState.loading) return;
 
-  const { forceTeamRefresh, refreshPlayers, forceRankingRefresh, loadLadder, loadTournaments } = normalizeCommunityLoadOptions(options);
+  const { forceTeamRefresh, refreshPlayers, forceRankingRefresh, loadLadder, loadLeague, loadTournaments } = normalizeCommunityLoadOptions(options);
   const seasonState = getCurrentCplSeasonState();
   const currentSeason = seasonState.season;
   const ladderId = currentSeason + 36;
@@ -6684,6 +7082,7 @@ async function loadCommunityStats(options = {}) {
     communityStatsState.communityName = getCommunityDisplayName(communityData);
     communityStatsState.teams = teamsWithTrends;
     communityStatsState.ladderEntries = ladderEntries;
+    communityStatsState.leagueEntries = communityLeagueState.loaded ? communityLeagueState.entries : [];
     communityStatsState.communitySource = communitySource;
     communityStatsState.ladderSource = ladderSource;
 
@@ -6790,6 +7189,7 @@ async function loadCommunityStats(options = {}) {
     communityStatsState.teams = [];
     communityStatsState.players = [];
     communityStatsState.ladderEntries = [];
+    communityStatsState.leagueEntries = [];
     communityStatsState.ladderPlayers = [];
   } finally {
     communityStatsState.loading = false;
@@ -6797,6 +7197,10 @@ async function loadCommunityStats(options = {}) {
 
     if (loadLadder && communityStatsState.activePanel === "ladder" && communityStatsState.loaded && !communityLadderState.loaded && !communityLadderState.loading) {
       loadCommunityLadder(false);
+    }
+
+    if (loadLeague && communityStatsState.activePanel === "league" && communityStatsState.loaded && !communityLeagueState.loaded && !communityLeagueState.loading) {
+      loadCommunityLeague(false);
     }
 
     if (loadTournaments && communityStatsState.loaded && !communityTournamentState.loaded && !communityTournamentState.loading) {
@@ -6872,6 +7276,7 @@ async function ensureActiveCommunityPlayerRanking(forceRefresh = false) {
         refreshPlayers: true,
         forceRankingRefresh: false,
         loadLadder: false,
+        loadLeague: false,
         loadTournaments: false
       });
     }
@@ -6894,6 +7299,7 @@ async function loadCommunityLadder(forceRefresh = false) {
       refreshPlayers: true,
       forceRankingRefresh: false,
       loadLadder: false,
+      loadLeague: false,
       loadTournaments: false
     });
   }
@@ -6953,6 +7359,125 @@ async function loadCommunityLadder(forceRefresh = false) {
   } finally {
     communityLadderState.loading = false;
     renderCommunityLadder();
+  }
+}
+
+async function loadCommunityLeague(forceRefresh = false) {
+  if (communityLeagueState.loading) return;
+
+  if (!communityStatsState.loaded && !communityStatsState.loading) {
+    await loadCommunityStats({
+      forceTeamRefresh: false,
+      refreshPlayers: true,
+      forceRankingRefresh: false,
+      loadLadder: false,
+      loadLeague: false,
+      loadTournaments: false
+    });
+  }
+
+  communityLeagueState.loading = true;
+  communityLeagueState.error = "";
+  communityLeagueState.warning = "Loading league data...";
+  renderCommunityLeague();
+
+  try {
+    const leagueIds = getCommunityLeagueIds();
+    const warnings = [];
+    const sourceParts = [];
+    const allEntries = [];
+    const allMatches = [];
+    const seenMatches = new Set();
+    let matchCount = 0;
+    let totalMatchCount = 0;
+    let pageCount = 0;
+    let liveWindow = false;
+
+    if (!leagueIds.length) {
+      throw new Error("No league IDs found for community teams.");
+    }
+
+    for (const leagueId of leagueIds) {
+      const teamsInLeague = getCommunityTeamsForLeague(leagueId);
+      const teamIds = teamsInLeague.map(team => team.teamId).filter(Boolean);
+
+      try {
+        const standings = await fetchJsonWithRetry(buildLeagueTeamsDataUrl(leagueId, forceRefresh), {
+          headers: {
+            "Accept": "application/json"
+          }
+        }, `League ${leagueId} standings`);
+        allEntries.push(...normalizeLeagueEntries(standings, toFiniteNumberOrNull(leagueId)));
+        sourceParts.push("standings");
+      } catch (error) {
+        console.warn("CPL league standings failed", { leagueId, error });
+        warnings.push(`League ${leagueId} standings failed: ${error?.message || error}.`);
+      }
+
+      try {
+        const data = await fetchJsonWithRetry(buildLeagueMatchesDataUrl(leagueId, forceRefresh, teamIds), {
+          headers: {
+            "Accept": "application/json"
+          }
+        }, `League ${leagueId} matches`);
+        const matches = normalizeLeagueMatchesData(data);
+
+        matches.forEach(match => {
+          const key = String(match.id);
+          if (seenMatches.has(key)) return;
+          seenMatches.add(key);
+          allMatches.push(match);
+        });
+
+        matchCount += toFiniteNumberOrNull(data?.matchCount) ?? matches.length;
+        totalMatchCount += toFiniteNumberOrNull(data?.totalMatchCount) ?? matches.length;
+        pageCount += toFiniteNumberOrNull(data?.pageCount) ?? 1;
+        liveWindow = liveWindow || Boolean(data?.liveWindow);
+        sourceParts.push(data?.source || "matches");
+      } catch (error) {
+        console.warn("CPL league matches failed", { leagueId, error });
+        warnings.push(`League ${leagueId} matches failed: ${error?.message || error}.`);
+      }
+    }
+
+    if (!allEntries.length && !allMatches.length) {
+      throw new Error(warnings.join(" ") || "No league data loaded.");
+    }
+
+    communityLeagueState.entries = allEntries;
+    communityLeagueState.matches = allMatches.sort(compareTournamentMatches);
+    communityLeagueState.matchCount = matchCount || allMatches.length;
+    communityLeagueState.totalMatchCount = totalMatchCount || communityLeagueState.matchCount;
+    communityLeagueState.pageCount = pageCount || 0;
+    communityLeagueState.liveWindow = liveWindow;
+    communityLeagueState.source = sourceParts.includes("api")
+      ? "api"
+      : sourceParts.includes("cache")
+        ? "cache"
+        : sourceParts.length
+          ? Array.from(new Set(sourceParts)).join(", ")
+          : "";
+    communityLeagueState.loaded = true;
+    communityLeagueState.error = "";
+    communityLeagueState.warning = warnings.join(" ");
+    communityLeagueState.lastUpdated = new Date().toISOString();
+    communityStatsState.leagueEntries = allEntries;
+    communityStatsState.teams = joinCommunityTeamsWithLeague(communityStatsState.teams, allEntries);
+    communityStatsState.leagueSource = communityLeagueState.source;
+  } catch (error) {
+    console.error("CPL community league data failed", error);
+    communityLeagueState.loaded = false;
+    communityLeagueState.error = error?.message || "Community league data failed.";
+    communityLeagueState.warning = "";
+    communityLeagueState.entries = [];
+    communityLeagueState.matches = [];
+    communityLeagueState.matchCount = 0;
+    communityLeagueState.totalMatchCount = 0;
+    communityLeagueState.pageCount = 0;
+    communityLeagueState.liveWindow = false;
+  } finally {
+    communityLeagueState.loading = false;
+    renderCommunityStats();
   }
 }
 
@@ -7046,6 +7571,10 @@ function ensureCommunityStatsLoaded() {
     loadCommunityLadder(false);
   }
 
+  if (communityStatsState.activePanel === "league" && !communityLeagueState.loaded && !communityLeagueState.loading) {
+    loadCommunityLeague(false);
+  }
+
   if (communityStatsState.activePanel === "players" && communityStatsState.playerRankingType === "ladder") {
     ensureActiveCommunityPlayerRanking(false);
   }
@@ -7085,6 +7614,7 @@ function setupCommunityStats() {
       refreshPlayers: false,
       forceRankingRefresh: false,
       loadLadder: false,
+      loadLeague: false,
       loadTournaments: false
     }).then(() => {
       communityLadderState.loaded = false;
@@ -7094,6 +7624,27 @@ function setupCommunityStats() {
       communityLadderState.error = error?.message || "Ladder refresh failed.";
       communityLadderState.loading = false;
       renderCommunityLadder();
+    });
+  });
+
+  document.getElementById("community-league-refresh-button")?.addEventListener("click", () => {
+    if (communityStatsState.loading || communityLeagueState.loading) return;
+
+    loadCommunityStats({
+      forceTeamRefresh: true,
+      refreshPlayers: false,
+      forceRankingRefresh: false,
+      loadLadder: false,
+      loadLeague: false,
+      loadTournaments: false
+    }).then(() => {
+      communityLeagueState.loaded = false;
+      return loadCommunityLeague(true);
+    }).catch(error => {
+      console.error("CPL community league refresh failed", error);
+      communityLeagueState.error = error?.message || "League refresh failed.";
+      communityLeagueState.loading = false;
+      renderCommunityLeague();
     });
   });
 
@@ -7128,6 +7679,10 @@ function setupCommunityStats() {
 
       if (communityStatsState.activePanel === "ladder" && !communityLadderState.loaded && !communityLadderState.loading) {
         loadCommunityLadder(false);
+      }
+
+      if (communityStatsState.activePanel === "league" && !communityLeagueState.loaded && !communityLeagueState.loading) {
+        loadCommunityLeague(false);
       }
 
       if (communityStatsState.activePanel === "players" && communityStatsState.playerRankingType === "ladder") {
