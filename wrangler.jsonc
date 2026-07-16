@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cpl-proxy",
+  "main": "worker/worker.js",
+  "compatibility_date": "2026-06-14",
+  "kv_namespaces": [
+    {
+      "binding": "CPL_CACHE",
+      "id": "b07577ad340247dea4322f0891d9eae9"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 * * * *"]
+  }
+}
