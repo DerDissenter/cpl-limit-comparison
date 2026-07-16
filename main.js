@@ -127,7 +127,8 @@ const TRANSFER_SUGGESTION_LIMIT = 10;
 const COMMUNITY_ID = 121;
 const COMMUNITY_CACHE_KEY = "cplCommunityStatsCache_v1";
 const COMMUNITY_RANKING_BASELINES_KEY = "cplCommunityRankingBaselines_v1";
-const COMMUNITY_TOURNAMENT_CACHE_KEY = "cplCommunityTournamentCache_v1";
+const COMMUNITY_TOURNAMENT_CACHE_KEY = "cplCommunityTournamentCache_v2";
+const LEGACY_COMMUNITY_TOURNAMENT_CACHE_KEYS = ["cplCommunityTournamentCache_v1"];
 const COMMUNITY_CACHE_MAX_AGE_MS = 60 * 60 * 1000;
 const COMMUNITY_TOURNAMENT_CACHE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 const COMMUNITY_TOURNAMENT_FETCH_LIMIT = 16;
@@ -2157,10 +2158,7 @@ function findArrayByEntryShape(rawData, predicate) {
 }
 
 function getRankingCacheKey(type = RANKING_CONFIG.type) {
-  const normalizedType = String(type || RANKING_CONFIG.type).trim().toLowerCase();
-  return normalizedType === RANKING_CONFIG.type
-    ? RANKING_CACHE_KEY
-    : `${RANKING_CACHE_KEY}_${normalizedType}`;
+  return RANKING_CACHE_KEY;
 }
 
 function getRankingUrl(page, season = getCurrentRankingSeason(), type = RANKING_CONFIG.type) {
@@ -2380,7 +2378,11 @@ function normalizeDevalueRankingPlayer(root, playerRef, rank = null, rankingSeas
   const hasStatObject = stat && typeof stat === "object" && !Array.isArray(stat);
   const statValues = resolveDevalueStatObject(root, stat) || {};
   const seasonStatValues = getSeasonRankingStatsFromRows(root, player.playerStats, rankingSeason, type);
-  const rankingStats = hasPositiveRankingStat(statValues) ? statValues : seasonStatValues || statValues;
+  const ladderStatValues = getSeasonRankingStatsFromRows(root, player.playerStats, rankingSeason, "ladder");
+  const normalizedType = String(type || RANKING_CONFIG.type).toLowerCase();
+  const rankingStats = normalizedType !== RANKING_OFFICIAL_AGGREGATE_MATCH_TYPE && seasonStatValues
+    ? seasonStatValues
+    : hasPositiveRankingStat(statValues) ? statValues : seasonStatValues || statValues;
 
   if (id === null || id === undefined || teamId === null || teamId === undefined) {
     return null;
@@ -2395,6 +2397,7 @@ function normalizeDevalueRankingPlayer(root, playerRef, rank = null, rankingSeas
     team,
     country: resolveRankingReference(root, player.country),
     rank,
+    matchTypeStats: ladderStatValues ? { ladder: ladderStatValues } : {},
     games: rankingStats.games
       ?? (hasStatObject ? 0 : null)
       ?? resolveRankingScalar(root, stat, "matches")
@@ -2538,14 +2541,53 @@ function getRankingCache(type = RANKING_CONFIG.type) {
 }
 
 function setRankingCache(players, season = getCurrentRankingSeason(), type = RANKING_CONFIG.type) {
-  localStorage.setItem(getRankingCacheKey(type), JSON.stringify({
-    timestamp: Date.now(),
-    season,
-    country: RANKING_CONFIG.country,
-    type,
-    limit: RANKING_CONFIG.limit,
-    players
-  }));
+  try {
+    localStorage.removeItem(`${RANKING_CACHE_KEY}_ladder`);
+    localStorage.setItem(getRankingCacheKey(type), JSON.stringify({
+      schemaVersion: 8,
+      timestamp: Date.now(),
+      season,
+      country: RANKING_CONFIG.country,
+      type: RANKING_CONFIG.type,
+      limit: RANKING_CONFIG.limit,
+      players
+    }));
+  } catch (error) {
+    console.warn("CPL ranking browser cache could not be stored", error);
+  }
+}
+
+function deriveRankingPlayersForType(players, type = RANKING_CONFIG.type) {
+  const normalizedType = String(type || RANKING_CONFIG.type).trim().toLowerCase();
+  if (normalizedType === RANKING_CONFIG.type) return players;
+
+  const derived = players
+    .map(player => {
+      const stats = player?.matchTypeStats?.[normalizedType];
+      if (!stats || !hasPositiveRankingStat(stats)) return null;
+
+      return {
+        ...player,
+        rank: null,
+        games: toFiniteNumberOrNull(stats.games),
+        kills: toFiniteNumberOrNull(stats.kills),
+        deaths: toFiniteNumberOrNull(stats.deaths),
+        headshots: toFiniteNumberOrNull(stats.headshots),
+        mvps: toFiniteNumberOrNull(stats.mvps),
+        kdRatio: getComputedRankingKd(stats),
+        hsPercentage: getComputedRankingHs(stats)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const killsSort = compareNullableNumbers(a.kills, b.kills, "desc");
+      if (killsSort !== 0) return killsSort;
+      const gamesSort = compareNullableNumbers(a.games, b.games, "desc");
+      if (gamesSort !== 0) return gamesSort;
+      return String(a.id ?? a.playerId).localeCompare(String(b.id ?? b.playerId), undefined, { numeric: true });
+    });
+
+  return derived.map((player, index) => ({ ...player, rank: index + 1 }));
 }
 
 function addUniqueRankingPlayers(target, pagePlayers, seenRankingKeys) {
@@ -2565,9 +2607,11 @@ function addUniqueRankingPlayers(target, pagePlayers, seenRankingKeys) {
 
 async function loadRankingDataWithCache(forceRefresh = false, onProgress = () => {}, season = getCurrentRankingSeason(), type = RANKING_CONFIG.type) {
   const rankingSeason = Math.max(1, Math.round(toFiniteNumberOrNull(season) || getCurrentRankingSeason()));
-  const rankingType = String(type || RANKING_CONFIG.type).trim().toLowerCase();
+  const requestedType = String(type || RANKING_CONFIG.type).trim().toLowerCase();
+  const rankingType = RANKING_CONFIG.type;
   const cached = getRankingCache(rankingType);
   const cacheMatchesConfig =
+    cached?.schemaVersion === 8 &&
     cached?.season === rankingSeason &&
     cached?.country === RANKING_CONFIG.country &&
     cached?.type === rankingType &&
@@ -2580,8 +2624,8 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
     return {
       source: "cache",
       season: rankingSeason,
-      type: rankingType,
-      players: cached.players
+      type: requestedType,
+      players: deriveRankingPlayersForType(cached.players, requestedType)
     };
   }
 
@@ -2622,8 +2666,8 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
       return {
         source: rankingBundle?.source || "bundle",
         season: rankingSeason,
-        type: rankingType,
-        players
+        type: requestedType,
+        players: deriveRankingPlayersForType(players, requestedType)
       };
     }
 
@@ -2692,8 +2736,8 @@ async function loadRankingDataWithCache(forceRefresh = false, onProgress = () =>
   return {
     source: "api",
     season: rankingSeason,
-    type: rankingType,
-    players
+    type: requestedType,
+    players: deriveRankingPlayersForType(players, requestedType)
   };
 }
 
@@ -4160,8 +4204,10 @@ function buildLeagueMatchesDataUrl(leagueId, forceRefresh = false, teamIds = [])
   return `${CPL_PROXY_BASE}/leagues/${encodeURIComponent(leagueId)}/matches?${params.toString()}`;
 }
 
-function buildChampionshipDataUrl(season) {
-  return `${CPL_PROXY_BASE}/championships/${encodeURIComponent(season)}/__data.json?x-sveltekit-invalidated=001`;
+function buildChampionshipDataUrl(season, forceRefresh = false) {
+  const url = new URL(`${CPL_PROXY_BASE}/championships/${encodeURIComponent(season)}/__data.json`);
+  if (forceRefresh) url.searchParams.set("refresh", "true");
+  return url.toString();
 }
 
 function buildOfficialTournamentsDataUrl() {
@@ -4464,11 +4510,26 @@ function getCommunityStatsCache() {
 }
 
 function setCommunityStatsCache(payload) {
-  localStorage.setItem(COMMUNITY_CACHE_KEY, JSON.stringify({
-    timestamp: Date.now(),
-    communityId: COMMUNITY_ID,
-    ...payload
-  }));
+  const compactPayload = {
+    ...payload,
+    communityData: payload.communityData ? {
+      name: getCommunityDisplayName(payload.communityData),
+      teams: normalizeCommunityTeams(payload.communityData)
+    } : null,
+    ladderData: payload.ladderData ? {
+      teams: normalizeLadderEntries(payload.ladderData)
+    } : null
+  };
+
+  try {
+    localStorage.setItem(COMMUNITY_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      communityId: COMMUNITY_ID,
+      ...compactPayload
+    }));
+  } catch (error) {
+    console.warn("CPL community browser cache could not be stored", error);
+  }
 }
 
 function getFreshCommunityStatsCache(season, ladderId) {
@@ -4622,10 +4683,19 @@ function getLadderEntryArray(rawData) {
 }
 
 function getCommunityTournamentCache() {
+  LEGACY_COMMUNITY_TOURNAMENT_CACHE_KEYS.forEach(key => {
+    try {
+      localStorage.removeItem(key);
+    } catch (error) {
+      console.warn(`Legacy CPL tournament browser cache ${key} could not be removed`, error);
+    }
+  });
+
   try {
     const cached = JSON.parse(localStorage.getItem(COMMUNITY_TOURNAMENT_CACHE_KEY));
     return cached && typeof cached === "object" ? cached : {};
-  } catch {
+  } catch (error) {
+    console.warn("CPL tournament browser cache could not be read", error);
     return {};
   }
 }
@@ -4642,7 +4712,11 @@ function setCommunityTournamentCacheEntry(key, payload) {
     timestamp: Date.now(),
     payload
   };
-  localStorage.setItem(COMMUNITY_TOURNAMENT_CACHE_KEY, JSON.stringify(cached));
+  try {
+    localStorage.setItem(COMMUNITY_TOURNAMENT_CACHE_KEY, JSON.stringify(cached));
+  } catch (error) {
+    console.warn("CPL tournament browser cache could not be stored", error);
+  }
 }
 
 function resolveSvelteIndex(root, index, seen) {
@@ -4929,7 +5003,7 @@ async function fetchChampionshipTournaments(season, forceRefresh = false) {
   const cached = !forceRefresh ? getFreshCommunityTournamentCacheEntry(cacheKey) : null;
   if (cached) return { ...cached, source: "cache" };
 
-  const data = await fetchJsonWithRetry(buildChampionshipDataUrl(season), {
+  const data = await fetchJsonWithRetry(buildChampionshipDataUrl(season, forceRefresh), {
     headers: { "Accept": "application/json" }
   }, "Championship tournament list");
   const summaries = extractTournamentSummariesFromData(data, season).slice(0, COMMUNITY_TOURNAMENT_FETCH_LIMIT);
@@ -5384,6 +5458,10 @@ function buildDemoDivisionIconDataUrl(divisionName) {
 
 function buildCplTeamUrl(teamId) {
   return teamId ? `https://www.cplmanager.com/cpl/teams/${encodeURIComponent(teamId)}` : "";
+}
+
+function buildCplLeagueUrl(leagueId) {
+  return leagueId ? `https://www.cplmanager.com/cpl/leagues/${encodeURIComponent(leagueId)}` : "";
 }
 
 function buildCplPlayerUrl(teamId, playerId) {
@@ -6462,12 +6540,15 @@ function renderCommunityLeagueTeamsTable() {
 
   const teams = [...communityStatsState.teams]
     .sort((a, b) => {
-      const divisionSort = compareNullableNumbers(a.division, b.division, "desc");
+      const divisionPriority = { master: 3, diamond: 2, emerald: 1 };
+      const aPriority = divisionPriority[String(a.divisionName || "").toLowerCase()] || 0;
+      const bPriority = divisionPriority[String(b.divisionName || "").toLowerCase()] || 0;
+      const divisionSort = bPriority - aPriority;
       if (divisionSort !== 0) return divisionSort;
-      const leagueSort = compareNullableNumbers(a.leagueId, b.leagueId, "asc");
-      if (leagueSort !== 0) return leagueSort;
       const positionSort = compareNullableNumbers(a.leaguePosition, b.leaguePosition, "asc");
       if (positionSort !== 0) return positionSort;
+      const leagueSort = compareNullableNumbers(a.leagueId, b.leagueId, "asc");
+      if (leagueSort !== 0) return leagueSort;
       return String(a.teamName || "").localeCompare(String(b.teamName || ""));
     });
 
@@ -6483,14 +6564,22 @@ function renderCommunityLeagueTeamsTable() {
     const record = team.leagueWins === null && team.leagueDraws === null && team.leagueLosses === null
       ? "-"
       : `${formatCommunityNumber(team.leagueWins)}-${formatCommunityNumber(team.leagueDraws)}-${formatCommunityNumber(team.leagueLosses)}`;
-    const leagueLabel = `${team.divisionName || "League"} ${team.leagueId ? `#${formatCommunityNumber(team.leagueId)}` : ""}`.trim();
+    const divisionName = team.divisionName || "League";
+    const divisionIconHtml = team.divisionIconUrl
+      ? `<img src="${escapeHtml(team.divisionIconUrl)}" alt="" loading="lazy">`
+      : "";
+    const leagueContent = `<span class="community-division">${divisionIconHtml}<span>${escapeHtml(divisionName)}</span></span>`;
+    const leagueUrl = buildCplLeagueUrl(team.leagueId);
+    const leagueHtml = leagueUrl
+      ? `<a class="community-link community-league-link" href="${escapeHtml(leagueUrl)}" target="_blank" rel="noopener noreferrer" title="Open ${escapeHtml(divisionName)} league">${leagueContent}</a>`
+      : leagueContent;
 
     return `
       <tr>
         <td>${team.leaguePosition === null ? "-" : `#${formatCommunityNumber(team.leaguePosition)}`}</td>
         <td>${logoHtml}</td>
         <td><strong>${renderCommunityTeamNameLink(team.teamId, team.teamName)}</strong></td>
-        <td>${escapeHtml(leagueLabel || "-")}</td>
+        <td>${leagueHtml}</td>
         <td>${escapeHtml(record)}</td>
         <td>${renderCommunitySignedNumber(team.leagueRoundDifference)}</td>
         <td>${formatCommunityNumber(team.leaguePoints)}</td>
