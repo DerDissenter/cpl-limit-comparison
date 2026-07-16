@@ -182,6 +182,31 @@ test("community cache quota errors do not break the app", () => {
   }));
 });
 
+test("tournament cache removes the legacy key and tolerates quota errors", () => {
+  const storage = createLocalStorage({
+    cplCommunityTournamentCache_v1: JSON.stringify({ stale: true })
+  }, true);
+  const app = loadFrontend({ localStorage: storage });
+
+  assert.doesNotThrow(() => app.setCommunityTournamentCacheEntry("season:13", { tournaments: [] }));
+  assert.equal(storage.values.has("cplCommunityTournamentCache_v1"), false);
+  assert.equal(storage.values.has("cplCommunityTournamentCache_v2"), false);
+});
+
+test("championship refresh and CPL league URLs use the supported routes", () => {
+  const app = loadFrontend();
+
+  assert.equal(
+    app.buildChampionshipDataUrl(13),
+    "https://cpl-proxy.dissenter-cpl-tools.workers.dev/championships/13/__data.json"
+  );
+  assert.equal(
+    app.buildChampionshipDataUrl(13, true),
+    "https://cpl-proxy.dissenter-cpl-tools.workers.dev/championships/13/__data.json?refresh=true"
+  );
+  assert.equal(app.buildCplLeagueUrl(901), "https://www.cplmanager.com/cpl/leagues/901");
+});
+
 test("daily Worker refresh stores one Official snapshot and reuses it", async () => {
   const upstreamUrls = [];
   const page = {

@@ -837,6 +837,12 @@ h2 {
   white-space: nowrap;
 }
 
+.community-league-link {
+  display: inline-flex;
+  align-items: center;
+  text-transform: capitalize;
+}
+
 .community-country-flag {
   display: inline-flex;
   align-items: center;
